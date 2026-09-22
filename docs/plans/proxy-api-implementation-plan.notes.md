@@ -30,3 +30,10 @@ Live API не вызывался, credentials не использовались,
 После STOP оба probe parent contacts удалены с JSON success и выполнен logout. Отдельный post-error GET detail и проверка каскада после parent delete не выполнялись. Staff и labels subsets не достигнуты; task/lead subset не запускался из-за недоказанной notification safety без safe test staff ID.
 
 Результат передан как **ARCHITECT REVIEW REQUIRED / BLOCKED dependent subset**. До решения по parent mapping/bootstrap details и безопасному staff/task fixture зависимая часть C06–C08/T01–T04 не может считаться закрытой; issue #4 остаётся открытым.
+#### Rework 1 по архитектурному решению issue #4
+
+22.09.2026 выполнены только разрешённые независимые subsets: fresh singular C08, schema-only `GET /staff`, lifecycle двух новых labels. Протокол: 23 последовательных запроса, один login/logout, unknown writes=0, STOP отсутствовал.
+
+Singular C08 вернул JSON error 404; C06/C03 readback доказал, что detail и parent сохранились. Staff endpoint account-scoped и не вернул project-membership fields. Labels M01–M04 созданы, подтверждены project lists, изменены, удалены и подтверждённо отсутствуют после cleanup в обоих тестовых проектах.
+
+Архитектура и порядок плана не менялись. Task/owner/observer runtime не выполнялся и остаётся заблокированным до safe staff fixture. Для C08 и out-of-band details нужен официальный ответ поставщика. Результат передан на повторный PM/architect review; 0.4 и реализация не начинаются, issue #4 остаётся открытым.

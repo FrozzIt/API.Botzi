@@ -119,3 +119,14 @@ Plural C08 `DELETE /contact/details/{detail_id}` вернул HTTP 200 + JSON er
 STOP до `GET /staff` и labels означает, что staff, owner=0, observers, labels и transfer не получили новых live-фактов. Task writes намеренно не выполнялись: без safe test staff ID документация не гарантирует отсутствие notifications реальному owner.
 
 Предлагаемый статус — **ARCHITECT REVIEW REQUIRED / BLOCKED dependent subset**. Для existing/out-of-band detail по одному detail ID безопасный bootstrap ownership не доказан; staff/labels/tasks требуют отдельного решения и разрешённого продолжения. Это предложение, не само-приёмка.
+## Live update 0.3 rework-1 — 2026-09-22
+
+[Дополнение протокола](isolation-findings.md#rework-1--singular-c08-staff-schema-и-labels) фиксирует 23 последовательных запроса без STOP и unknown writes.
+
+Fresh mapped detail: singular `DELETE /contact/detail/{detail_id}` вернул HTTP 200 + JSON error 404; C06/C03 readback подтвердил, что detail и parent сохранились и mapping не изменилась. Вместе с ранее наблюдавшимся plural error 400 это не даёт рабочего C08 route; другие URL не проверялись.
+
+`GET /staff` вернул один account-scoped entry без project-membership fields. Сохранены только count, schema keys/classes и booleans sensitive-field presence; PII/IDs не сохранялись. Zero-ID entry присутствовал, но `owner=0` semantics и assignment не тестировались.
+
+M01–M04 подтверждены на двух новых labels: project lists доказали own membership и отсутствие probe другого проекта; edit readback успешен; delete readback подтвердил отсутствие; cleanup complete. M02 runtime envelope был object, не внешний array документационного примера.
+
+Task 0.3 не объявляется завершённой: task/owner/observer subset требует safe staff fixture, а C08/provider bootstrap остаются блокерами. Предлагается повторный PM/architect review без перехода к 0.4.
