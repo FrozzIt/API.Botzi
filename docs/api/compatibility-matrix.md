@@ -28,14 +28,14 @@
 | P12 | [src](https://docs.direct.lptracker.ru/funnel/get/) | GET | `/project/{project_id}/funnel/{funnel_id}` | Шаг воронки | path.project | no | read≤1 | E | DOC |
 | P13 | [src](https://docs.direct.lptracker.ru/autofunnel/list/) | GET | `/project/{project_id}/autofunnels` | Список автоворонок | path.project | no | read≤1 | E | DOC |
 | P14 | [src](https://docs.direct.lptracker.ru/autofunnel/edit/) | PATCH | `/project/{project_id}/autofunnels/{autofunnel_id}` | Изменить статус автоворонки | path.project | yes | none-after-send | E: runtime side effects не описаны | DOC+LIVE |
-| C01 | [src](https://docs.direct.lptracker.ru/contact/search/) | GET | `/contact/search` | Поиск контактов | query.project | no | read≤1 | S: HTTP требует один фильтр, SDK обещает все контакты; новые MAX-поля | DOC+LIVE |
-| C02 | [src](https://docs.direct.lptracker.ru/contact/create/) | POST | `/contact` | Создать контакт | body.project | yes | none-after-send | E | DOC |
-| C03 | [src](https://docs.direct.lptracker.ru/contact/get/) | GET | `/contact/{contact_id}` | Контакт по ID | object.project | no | read≤1 | E | DOC |
+| C01 | [src](https://docs.direct.lptracker.ru/contact/search/) | GET | `/contact/search` | Поиск контактов | query.project | no | read≤1 | LIVE 0.3: `project_id`-only вернул 400 для A/B; SDK all-contact bootstrap не воспроизведён | DOC+LIVE |
+| C02 | [src](https://docs.direct.lptracker.ru/contact/create/) | POST | `/contact` | Создать контакт | body.project | yes | none-after-send | LIVE 0.3: два synthetic contacts созданы в A/B; response project/details совпали | LIVE |
+| C03 | [src](https://docs.direct.lptracker.ru/contact/get/) | GET | `/contact/{contact_id}` | Контакт по ID | object.project | no | read≤1 | LIVE 0.3: parent reads probes вернули ожидаемые project и detail | LIVE |
 | C04 | [src](https://docs.direct.lptracker.ru/contact/edit/) | PUT | `/contact/{contact_id}` | Изменить контакт | object.project | yes | none-after-send | F: `field` в body против `fields` в curl; clear/empty | DOC+LIVE |
-| C05 | [src](https://docs.direct.lptracker.ru/contact/delete/) | DELETE | `/contact/{contact_id}` | Удалить контакт | object.project before delete | yes | none-after-send | E: каскад не описан | DOC+LIVE |
-| C06 | [src](https://docs.direct.lptracker.ru/contact/detail_get/) | GET | `/contact/details/{detail_id}` | Получить контактные данные | O: ответ без parent/project | no | read≤1 | O,E | DOC+LIVE |
-| C07 | [src](https://docs.direct.lptracker.ru/contact/detail_edit/) | PUT | `/contact/details/{detail_id}` | Изменить контактные данные | O: нужен parent/index | yes | none-after-send | F: `value` в body/curl, `volume` в описании; O | DOC+LIVE |
-| C08 | [src](https://docs.direct.lptracker.ru/contact/detail_delete/) | DELETE | `/contact/details/{detail_id}` | Удалить контактные данные | O: нужен parent/index | yes | none-after-send | P: request `/details/`, curl `/detail/` | CONFLICT+LIVE |
+| C05 | [src](https://docs.direct.lptracker.ru/contact/delete/) | DELETE | `/contact/{contact_id}` | Удалить контакт | object.project before delete | yes | none-after-send | LIVE 0.3: cleanup DELETE success для обоих probe parents; detail cascade отдельно не читался | LIVE |
+| C06 | [src](https://docs.direct.lptracker.ru/contact/detail_get/) | GET | `/contact/details/{detail_id}` | Получить контактные данные | parent mapping; direct result без parent/project | no | read≤1 | LIVE 0.3: direct result без parent/project; mapping доказан только через C02/C03 для новых probes | LIVE |
+| C07 | [src](https://docs.direct.lptracker.ru/contact/detail_edit/) | PUT | `/contact/details/{detail_id}` | Изменить контактные данные | parent mapping required | yes | none-after-send | LIVE 0.3: plural PUT с `value` успешен, readback совпал; описание `volume` ошибочно | LIVE |
+| C08 | [src](https://docs.direct.lptracker.ru/contact/detail_delete/) | DELETE | `/contact/details/{detail_id}` | Удалить контактные данные | parent mapping required | yes | none-after-send | LIVE 0.3: plural path HTTP 200 JSON error 400; singular не запускался; post-error state не читался | CONFLICT+LIVE |
 | C09 | [src](https://docs.direct.lptracker.ru/contact/leads_get/) | GET | `/contact/{contact_id}/leads` | Лиды контакта | parent contact; лиды без project в примере | no | read≤1 | O,E | DOC+LIVE |
 | C10 | [src](https://docs.direct.lptracker.ru/contact/field_get/) | GET | `/contact/{contact_id}/field/{field_id}` | Поле контакта | parent contact + project fields | no | read≤1 | E | DOC |
 | C11 | [src](https://docs.direct.lptracker.ru/contact/field_edit/) | PUT | `/contact/{contact_id}/field/{field_id}` | Изменить поле контакта | parent contact + project fields | yes | none-after-send | P: request `/details/`, curl и SDK `/field/` | CONFLICT+LIVE |
@@ -80,6 +80,6 @@
 ## Итог по 64 строкам
 
 - 64 уникальных ID; 64 уникальных нормализованных пары method+path.
-- `LIVE`: 4; `DOC`: 20; `DOC+LIVE`: 37; `CONFLICT+LIVE`: 3; `UNAVAILABLE`: 0.
-- Три неразрешённых `CONFLICT+LIVE`: P10 (PUT против фактического GET в curl), C08 (`detail/details`), C11 (`details/field`). P02 подтверждён runtime на пути без trailing slash; slash-вариант не проверялся.
+- `LIVE`: 9; `DOC`: 18; `DOC+LIVE`: 34; `CONFLICT+LIVE`: 3; `UNAVAILABLE`: 0.
+- Три неразрешённых `CONFLICT+LIVE`: P10 (PUT против фактического GET в curl), C08 (`detail/details`; plural runtime вернул error 400, singular не проверен), C11 (`details/field`). P02 подтверждён runtime на пути без trailing slash; slash-вариант не проверялся.
 - Значение `DOC+LIVE` не опровергает наличие операции: оно означает, что документация подтверждает route, но не позволяет безопасно зафиксировать весь request/response/runtime-контракт.
