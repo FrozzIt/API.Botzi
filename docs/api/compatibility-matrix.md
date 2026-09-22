@@ -4,7 +4,7 @@
 
 ## Легенда
 
-- Статус: **DOC** — method+path однозначно совпадают в блоке запроса и/или curl; **DOC+LIVE** — method+path подтверждены, но указанная часть контракта требует live-проверки; **CONFLICT+LIVE** — официальный источник сам себе противоречит; **UNAVAILABLE** — источник недоступен.
+- Статус: **LIVE** — ограниченный runtime-сценарий подтверждён в задаче 0.2, но это не доказательство полного контракта; **DOC** — method+path однозначно совпадают в блоке запроса и/или curl; **DOC+LIVE** — method+path подтверждены, но указанная часть контракта требует live-проверки; **CONFLICT+LIVE** — официальный источник сам себе противоречит; **UNAVAILABLE** — источник недоступен.
 - Ownership: `account` — API не даёт проектной привязки; `path/query/body.project` — проект указан прямо; `object.project` — проект выводится из документированной модели объекта; `parent` — требуется проверка родительского объекта/справочника.
 - Side effect: `no`, `yes`, `session`.
 - Retry: `read≤1` — только безопасное чтение, максимум один ограниченный повтор; `none-after-send` — не повторять автоматически после отправки; `session-special` — координированное управление сессией.
@@ -12,10 +12,10 @@
 
 | ID | Source | Method | Path | Назначение | Ownership evidence | Side effect | Retry | Req/resp uncertainty | Verification status |
 |---|---|---|---|---|---|---|---|---|---|
-| A01 | [src](https://docs.direct.lptracker.ru/basic/auth/) | POST | `/login` | Получить token | account | session | session-special | E | DOC |
-| A02 | [src](https://docs.direct.lptracker.ru/basic/auth/) | POST | `/logout` | Удалить token | account | session | none-after-send | F: текст требует token, curl его не показывает | DOC+LIVE |
-| P01 | [src](https://docs.direct.lptracker.ru/project/list/) | GET | `/projects` | Список проектов аккаунта | account; проект выбирает proxy | no | read≤1 | E | DOC |
-| P02 | [src](https://docs.direct.lptracker.ru/project/get/) | GET | `/project/{project_id}` | Проект по ID | path.project | no | read≤1 | T: блок запроса с `/`, curl без `/` | CONFLICT+LIVE |
+| A01 | [src](https://docs.direct.lptracker.ru/basic/auth/) | POST | `/login` | Получить token | account | session | session-special | LIVE 2026-09-22: один login, JSON success, token получен | LIVE |
+| A02 | [src](https://docs.direct.lptracker.ru/basic/auth/) | POST | `/logout` | Удалить token | account | session | none-after-send | LIVE 2026-09-22: logout success; последующий GET получил 401 | LIVE |
+| P01 | [src](https://docs.direct.lptracker.ru/project/list/) | GET | `/projects` | Список проектов аккаунта | account; проект выбирает proxy | no | read≤1 | LIVE 2026-09-22: JSON success; 7 проектов, allowed A/B present | LIVE |
+| P02 | [src](https://docs.direct.lptracker.ru/project/get/) | GET | `/project/{project_id}` | Проект по ID | path.project | no | read≤1 | LIVE 2026-09-22: путь без trailing slash успешен для A/B; slash-вариант не тестировался | LIVE |
 | P03 | [src](https://docs.direct.lptracker.ru/project/custom/) | GET | `/project/{project_id}/customs` | Поля лидов проекта | path.project | no | read≤1 | E | DOC |
 | P04 | [src](https://docs.direct.lptracker.ru/project/field/) | GET | `/project/{project_id}/fields` | Поля контактов | path.project | no | read≤1 | E | DOC |
 | P05 | [src](https://docs.direct.lptracker.ru/project/callback_url/) | PUT | `/project/{project_id}/callback-url` | Установить webhook лида | path.project | yes | none-after-send | E: доставка/подпись не описаны | DOC+LIVE |
@@ -80,6 +80,6 @@
 ## Итог по 64 строкам
 
 - 64 уникальных ID; 64 уникальных нормализованных пары method+path.
-- `DOC`: 22; `DOC+LIVE`: 38; `CONFLICT+LIVE`: 4; `UNAVAILABLE`: 0.
-- Четыре `CONFLICT+LIVE`: P02 (trailing slash), P10 (PUT против фактического GET в curl), C08 (`detail/details`), C11 (`details/field`).
+- `LIVE`: 4; `DOC`: 20; `DOC+LIVE`: 37; `CONFLICT+LIVE`: 3; `UNAVAILABLE`: 0.
+- Три неразрешённых `CONFLICT+LIVE`: P10 (PUT против фактического GET в curl), C08 (`detail/details`), C11 (`details/field`). P02 подтверждён runtime на пути без trailing slash; slash-вариант не проверялся.
 - Значение `DOC+LIVE` не опровергает наличие операции: оно означает, что документация подтверждает route, но не позволяет безопасно зафиксировать весь request/response/runtime-контракт.
