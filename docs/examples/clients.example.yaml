@@ -1,0 +1,30 @@
+# Пример проектируемого формата, не готовая конфигурация работающего сервиса.
+# Все ID ниже вымышлены. Заменить hash до использования.
+# Файл находится только на сервере, вне публичных директорий.
+schema_version: 1
+revision: 1
+
+clients:
+  crm_client_a:
+    enabled: true
+    login: crm_client_a
+    password_hash: REPLACE_WITH_ARGON2ID_HASH
+    provider_account: primary
+    project_id: 12345
+    # Если API не позволяет надёжно получить состав сотрудников проекта,
+    # администратор явно задаёт разрешённые ID. Пустой список = нет сотрудников.
+    allowed_staff_ids: [101, 102]
+    main_owner_display_name: "Владелец проекта"
+
+  crm_client_b:
+    enabled: true
+    login: crm_client_b
+    password_hash: REPLACE_WITH_ARGON2ID_HASH
+    provider_account: primary
+    project_id: 67890
+    allowed_staff_ids: [201]
+    main_owner_display_name: "Владелец проекта"
+
+# provider_account: primary ссылается на внутреннюю конфигурацию поставщика.
+# Реальные login/password LPTracker хранятся отдельно: в серверном secret file
+# с ограниченными правами либо secret manager. Их нет в клиентском API.

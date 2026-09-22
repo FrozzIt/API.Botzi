@@ -1,0 +1,85 @@
+# Task 0.1 — документальная матрица 64 операций LPTracker
+
+Дата доступа: **2026-09-22**, Europe/Moscow. Это документальная сверка, не доказательство runtime-поведения.
+
+## Легенда
+
+- Статус: **DOC** — method+path однозначно совпадают в блоке запроса и/или curl; **DOC+LIVE** — method+path подтверждены, но указанная часть контракта требует live-проверки; **CONFLICT+LIVE** — официальный источник сам себе противоречит; **UNAVAILABLE** — источник недоступен.
+- Ownership: `account` — API не даёт проектной привязки; `path/query/body.project` — проект указан прямо; `object.project` — проект выводится из документированной модели объекта; `parent` — требуется проверка родительского объекта/справочника.
+- Side effect: `no`, `yes`, `session`.
+- Retry: `read≤1` — только безопасное чтение, максимум один ограниченный повтор; `none-after-send` — не повторять автоматически после отправки; `session-special` — координированное управление сессией.
+- Неопределённость: `E` — документация даёт пример, но не полную схему/null/лимиты/ошибки; `W` — спорная оболочка/статус ответа; `F` — конфликт имени поля; `P` — конфликт пути; `O` — ownership не доказуем из ответа операции; `S` — расхождение SDK и HTTP; `T` — trailing slash; `—` — специальных расхождений сверх `E` не найдено.
+
+| ID | Source | Method | Path | Назначение | Ownership evidence | Side effect | Retry | Req/resp uncertainty | Verification status |
+|---|---|---|---|---|---|---|---|---|---|
+| A01 | [src](https://docs.direct.lptracker.ru/basic/auth/) | POST | `/login` | Получить token | account | session | session-special | E | DOC |
+| A02 | [src](https://docs.direct.lptracker.ru/basic/auth/) | POST | `/logout` | Удалить token | account | session | none-after-send | F: текст требует token, curl его не показывает | DOC+LIVE |
+| P01 | [src](https://docs.direct.lptracker.ru/project/list/) | GET | `/projects` | Список проектов аккаунта | account; проект выбирает proxy | no | read≤1 | E | DOC |
+| P02 | [src](https://docs.direct.lptracker.ru/project/get/) | GET | `/project/{project_id}` | Проект по ID | path.project | no | read≤1 | T: блок запроса с `/`, curl без `/` | CONFLICT+LIVE |
+| P03 | [src](https://docs.direct.lptracker.ru/project/custom/) | GET | `/project/{project_id}/customs` | Поля лидов проекта | path.project | no | read≤1 | E | DOC |
+| P04 | [src](https://docs.direct.lptracker.ru/project/field/) | GET | `/project/{project_id}/fields` | Поля контактов | path.project | no | read≤1 | E | DOC |
+| P05 | [src](https://docs.direct.lptracker.ru/project/callback_url/) | PUT | `/project/{project_id}/callback-url` | Установить webhook лида | path.project | yes | none-after-send | E: доставка/подпись не описаны | DOC+LIVE |
+| P06 | [src](https://docs.direct.lptracker.ru/project/callback_url_list/) | GET | `/project/{project_id}/callback-url` | Список webhook лида | path.project | no | read≤1 | E | DOC |
+| P07 | [src](https://docs.direct.lptracker.ru/project/project_callback_url/) | PUT | `/project/{project_id}/project-callback-url` | Установить webhook CRM | path.project | yes | none-after-send | E: доставка/подпись не описаны | DOC+LIVE |
+| P08 | [src](https://docs.direct.lptracker.ru/project/project_callback_url_list/) | GET | `/project/{project_id}/project-callback-url` | Список webhook CRM | path.project | no | read≤1 | E | DOC |
+| P09 | [src](https://docs.direct.lptracker.ru/project/settings/widget/get/) | GET | `/project/{project_id}/widget` | Настройки виджета | path.project | no | read≤1 | E | DOC |
+| P10 | [src](https://docs.direct.lptracker.ru/project/settings/widget/edit/) | PUT | `/project/{project_id}/widget` | Изменить настройки виджета | path.project | yes | none-after-send | P: блок запроса PUT, curl без `-X PUT` и без body; полный набор настроек не задан | CONFLICT+LIVE |
+| P11 | [src](https://docs.direct.lptracker.ru/funnel/list/) | GET | `/project/{project_id}/funnel` | Шаги воронки | path.project | no | read≤1 | E | DOC |
+| P12 | [src](https://docs.direct.lptracker.ru/funnel/get/) | GET | `/project/{project_id}/funnel/{funnel_id}` | Шаг воронки | path.project | no | read≤1 | E | DOC |
+| P13 | [src](https://docs.direct.lptracker.ru/autofunnel/list/) | GET | `/project/{project_id}/autofunnels` | Список автоворонок | path.project | no | read≤1 | E | DOC |
+| P14 | [src](https://docs.direct.lptracker.ru/autofunnel/edit/) | PATCH | `/project/{project_id}/autofunnels/{autofunnel_id}` | Изменить статус автоворонки | path.project | yes | none-after-send | E: runtime side effects не описаны | DOC+LIVE |
+| C01 | [src](https://docs.direct.lptracker.ru/contact/search/) | GET | `/contact/search` | Поиск контактов | query.project | no | read≤1 | S: HTTP требует один фильтр, SDK обещает все контакты; новые MAX-поля | DOC+LIVE |
+| C02 | [src](https://docs.direct.lptracker.ru/contact/create/) | POST | `/contact` | Создать контакт | body.project | yes | none-after-send | E | DOC |
+| C03 | [src](https://docs.direct.lptracker.ru/contact/get/) | GET | `/contact/{contact_id}` | Контакт по ID | object.project | no | read≤1 | E | DOC |
+| C04 | [src](https://docs.direct.lptracker.ru/contact/edit/) | PUT | `/contact/{contact_id}` | Изменить контакт | object.project | yes | none-after-send | F: `field` в body против `fields` в curl; clear/empty | DOC+LIVE |
+| C05 | [src](https://docs.direct.lptracker.ru/contact/delete/) | DELETE | `/contact/{contact_id}` | Удалить контакт | object.project before delete | yes | none-after-send | E: каскад не описан | DOC+LIVE |
+| C06 | [src](https://docs.direct.lptracker.ru/contact/detail_get/) | GET | `/contact/details/{detail_id}` | Получить контактные данные | O: ответ без parent/project | no | read≤1 | O,E | DOC+LIVE |
+| C07 | [src](https://docs.direct.lptracker.ru/contact/detail_edit/) | PUT | `/contact/details/{detail_id}` | Изменить контактные данные | O: нужен parent/index | yes | none-after-send | F: `value` в body/curl, `volume` в описании; O | DOC+LIVE |
+| C08 | [src](https://docs.direct.lptracker.ru/contact/detail_delete/) | DELETE | `/contact/details/{detail_id}` | Удалить контактные данные | O: нужен parent/index | yes | none-after-send | P: request `/details/`, curl `/detail/` | CONFLICT+LIVE |
+| C09 | [src](https://docs.direct.lptracker.ru/contact/leads_get/) | GET | `/contact/{contact_id}/leads` | Лиды контакта | parent contact; лиды без project в примере | no | read≤1 | O,E | DOC+LIVE |
+| C10 | [src](https://docs.direct.lptracker.ru/contact/field_get/) | GET | `/contact/{contact_id}/field/{field_id}` | Поле контакта | parent contact + project fields | no | read≤1 | E | DOC |
+| C11 | [src](https://docs.direct.lptracker.ru/contact/field_edit/) | PUT | `/contact/{contact_id}/field/{field_id}` | Изменить поле контакта | parent contact + project fields | yes | none-after-send | P: request `/details/`, curl и SDK `/field/` | CONFLICT+LIVE |
+| C12 | [src](https://docs.direct.lptracker.ru/contact/field_delete/) | DELETE | `/contact/{contact_id}/field/{field_id}` | Очистить поле контакта | parent contact + project fields | yes | none-after-send | E | DOC |
+| V01 | [src](https://docs.direct.lptracker.ru/view/get/) | GET | `/view/{view_id}` | Просмотр по ID/UUID | object.project | no | read≤1 | E | DOC |
+| V02 | [src](https://docs.direct.lptracker.ru/view/create/) | POST | `/view` | Создать просмотр | body.project | yes | none-after-send | E: visitor/real_visitor не формализованы | DOC+LIVE |
+| V03 | [src](https://docs.direct.lptracker.ru/view/edit/) | PUT | `/view/{view_id}` | Изменить просмотр | object.project before write | yes | none-after-send | E | DOC |
+| V04 | [src](https://docs.direct.lptracker.ru/view/delete/) | DELETE | `/view/{view_id}` | Удалить просмотр | object.project before delete | yes | none-after-send | E: каскад не описан | DOC+LIVE |
+| L01 | [src](https://docs.direct.lptracker.ru/lead/create/) | POST | `/lead` | Создать лид/сделку | contact.project or body contact.project | yes | none-after-send | E: вложенные contact/view/custom/payment/owner; callback | DOC+LIVE |
+| L02 | [src](https://docs.direct.lptracker.ru/lead/custom_create/) | POST | `/custom/{project_id}/create` | Создать поле лида | path.project | yes | none-after-send | W: пример успеха — сырой объект без global envelope | DOC+LIVE |
+| L03 | [src](https://docs.direct.lptracker.ru/lead/custom_add_option/) | PATCH | `/custom/{project_id}/{custom_id}/add-category` | Добавить категории поля | path.project + parent field | yes | none-after-send | E | DOC |
+| L04 | [src](https://docs.direct.lptracker.ru/lead/get/) | GET | `/lead/{lead_id}` | Лид по ID | nested contact.project | no | read≤1 | E | DOC |
+| L05 | [src](https://docs.direct.lptracker.ru/lead/list/) | GET | `/lead/{project_id}/list` | Список лидов/сделок | path.project | no | read≤1 | W: страница показывает raw array, global docs требуют status | DOC+LIVE |
+| L06 | [src](https://docs.direct.lptracker.ru/lead/edit/) | PUT | `/lead/{lead_id}` | Изменить лид | nested contact.project before write | yes | none-after-send | E: custom/map/owner types | DOC+LIVE |
+| L07 | [src](https://docs.direct.lptracker.ru/lead/delete/) | DELETE | `/lead/{lead_id}` | Удалить лид | nested contact.project before delete | yes | none-after-send | E: каскад не описан | DOC+LIVE |
+| L08 | [src](https://docs.direct.lptracker.ru/lead/call/) | POST | `/lead/{lead_id}/call` | Инициировать звонок | parent lead | yes | none-after-send | E: телефония/дубликаты | DOC+LIVE |
+| L09 | [src](https://docs.direct.lptracker.ru/lead/file_upload/) | POST | `/lead/{lead_id}/file` | Загрузить Base64-файл | parent lead + custom field | yes | none-after-send | E: размер/MIME не ограничены | DOC+LIVE |
+| L10 | [src](https://docs.direct.lptracker.ru/lead/file_get/) | GET | `/lead/{lead_id}/custom/{custom_id}/file/{file_id}` | Получить Base64-файл | full parent chain in path | no | read≤1 | E | DOC |
+| L11 | [src](https://docs.direct.lptracker.ru/lead/owner_put/) | PUT | `/lead/{lead_id}/owner` | Сменить владельца | parent lead + account staff | yes | none-after-send | O: staff project membership/owner=0 не описаны | DOC+LIVE |
+| L12 | [src](https://docs.direct.lptracker.ru/lead/funnel_put/) | PUT | `/lead/{lead_id}/funnel` | Сменить шаг | parent lead + project funnel | yes | none-after-send | E: уведомления/side effects | DOC+LIVE |
+| L13 | [src](https://docs.direct.lptracker.ru/lead/field_get/) | GET | `/lead/{lead_id}/custom/{field_id}` | Поле лида | parent lead + project custom | no | read≤1 | E | DOC |
+| L14 | [src](https://docs.direct.lptracker.ru/lead/field_put/) | PUT | `/lead/{lead_id}/custom/{field_id}` | Изменить поле лида | parent lead + project custom | yes | none-after-send | E: типы value/вложенные IDs | DOC+LIVE |
+| L15 | [src](https://docs.direct.lptracker.ru/lead/field_delete/) | DELETE | `/lead/{lead_id}/custom/{field_id}` | Очистить поле лида | parent lead + project custom | yes | none-after-send | E | DOC |
+| L16 | [src](https://docs.direct.lptracker.ru/lead/comment_add/) | POST | `/lead/{lead_id}/comment` | Добавить комментарий | parent lead | yes | none-after-send | E: author side effect | DOC+LIVE |
+| L17 | [src](https://docs.direct.lptracker.ru/lead/comment_list/) | GET | `/lead/{lead_id}/comments` | Комментарии лида | parent lead | no | read≤1 | O: author account-wide | DOC+LIVE |
+| L18 | [src](https://docs.direct.lptracker.ru/lead/payment_add/) | POST | `/lead/{lead_id}/payment` | Добавить платёж | parent lead | yes | none-after-send | E: `sum` example string, model number; duplicate semantics | DOC+LIVE |
+| L19 | [src](https://docs.direct.lptracker.ru/lead/message_receive/) | POST | `/lead/messageReceive/{lead_id}` | Добавить входящее сообщение | parent lead | yes | none-after-send | E: messenger/files/дубликаты | DOC+LIVE |
+| L20 | [src](https://docs.direct.lptracker.ru/lead/message_history/) | GET | `/lead/chatHistory/{lead_id}` | История чата | parent lead | no | read≤1 | E: без пагинации/полной схемы | DOC+LIVE |
+| L21 | [src](https://docs.direct.lptracker.ru/lead/calls_list/) | GET | `/lead/{lead_id}/calls` | Звонки лида | parent lead | no | read≤1 | O,E: account owner и внешняя record URL | DOC+LIVE |
+| L22 | [src](https://docs.direct.lptracker.ru/max/message_status/) | POST | `/max/messageStatus` | Отметить доставку/прочтение MAX-сообщений | account/token scoped; lead/project absent | yes | none-after-send | O,E: project isolation и область массовой отметки не доказаны | DOC+LIVE |
+| S01 | [src](https://docs.direct.lptracker.ru/staff/list/) | GET | `/staff` | Сотрудники аккаунта | account; project membership absent | no | read≤1 | O: нет project_id | DOC+LIVE |
+| T01 | [src](https://docs.direct.lptracker.ru/task/create/) | POST | `/task` | Создать задачу | body.project + referenced lead/staff/labels | yes | none-after-send | F,O: body `title/text`, описание `task_title/task_text`, curl добавляет `contact_id`; visibility/notifications | DOC+LIVE |
+| T02 | [src](https://docs.direct.lptracker.ru/task/get/) | GET | `/task/{task_id}` | Задача по ID | object.project | no | read≤1 | O: вложенные staff fields/URLs | DOC+LIVE |
+| T03 | [src](https://docs.direct.lptracker.ru/task/list/) | GET | `/task/{project_id}/list` | Список задач | path.project | no | read≤1 | W: raw array против global status envelope; O staff | DOC+LIVE |
+| T04 | [src](https://docs.direct.lptracker.ru/task/edit/) | PUT | `/task/{task_id}` | Изменить задачу | object.project + body.project | yes | none-after-send | F,O: body `title/text`, описание `task_title/task_text`, curl добавляет `contact_id`; перенос/visibility | DOC+LIVE |
+| T05 | [src](https://docs.direct.lptracker.ru/task/delete/) | DELETE | `/task/{task_id}` | Удалить задачу | object.project before delete | yes | none-after-send | E | DOC |
+| M01 | [src](https://docs.direct.lptracker.ru/label/create/) | POST | `/label` | Создать метку | body.project; response lacks project | yes | none-after-send | F: body/curl `title`, description/model `name` | DOC+LIVE |
+| M02 | [src](https://docs.direct.lptracker.ru/label/list/) | GET | `/label/{project_id}/list` | Список меток | path.project | no | read≤1 | W: внешний array вокруг `{status,result}` | DOC+LIVE |
+| M03 | [src](https://docs.direct.lptracker.ru/label/edit/) | PUT | `/label/{label_id}` | Изменить метку | O: ID сверяется через project list | yes | none-after-send | F: body/curl `title`, description/model `name`; response no project | DOC+LIVE |
+| M04 | [src](https://docs.direct.lptracker.ru/label/delete/) | DELETE | `/label/{label_id}` | Удалить метку | O: ID сверяется через project list | yes | none-after-send | O,E: использование в задачах/каскад не описаны | DOC+LIVE |
+
+## Итог по 64 строкам
+
+- 64 уникальных ID; 64 уникальных нормализованных пары method+path.
+- `DOC`: 22; `DOC+LIVE`: 38; `CONFLICT+LIVE`: 4; `UNAVAILABLE`: 0.
+- Четыре `CONFLICT+LIVE`: P02 (trailing slash), P10 (PUT против фактического GET в curl), C08 (`detail/details`), C11 (`details/field`).
+- Значение `DOC+LIVE` не опровергает наличие операции: оно означает, что документация подтверждает route, но не позволяет безопасно зафиксировать весь request/response/runtime-контракт.
