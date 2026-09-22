@@ -100,3 +100,12 @@ rg -o 'https?://[^)] ]+' docs/api/compatibility-matrix.md \
 ## Статус передачи на повторную проверку
 
 Материалы задачи 0.1 переданы PM/reviewer на повторную проверку. Исследовательский отчёт покрывает 64 строки, L22 включён в authoritative registry и contract-test scope, результаты перенесены в `docs/api/compatibility-matrix.md`. Решение о принятии задачи и разрешении начать 0.2 принимает назначенный reviewer; до его письменной отметки следующая задача не начинается.
+
+
+## Live update 0.2 — 2026-09-22
+
+[Подробный протокол](connection-quota-findings.md) зафиксировал девять последовательных HTTPS-запросов к `direct.lptracker.ru` без business writes.
+
+Подтверждено runtime для ограниченного окна: один login success и token; authenticated `GET /projects`; чтение обоих разрешённых тестовых проектов по пути без trailing slash; logout success; отозванный token отклонён. Unauthenticated, synthetic invalid token, revoked token и неизвестный route вернули HTTP 200, валидный JSON `status=error` и safe codes 401/404. Redirect и HTML не наблюдались.
+
+Это не подтверждает весь request/response-контракт A01/A02/P01/P02. Quota scope, лимит 3 req/s, IP-ограничение, repeated login, token expiry, invalid-password/lockout и альтернативный host не проверялись из-за нетестового аккаунта и консервативного request budget.

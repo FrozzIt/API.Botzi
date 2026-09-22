@@ -13,3 +13,12 @@ Runtime-контракт и tenant/project isolation L22 документаци�
 Задача 0.1 документально сверена. Зафиксированы 64 уникальных ID и 64 уникальные пары method+path: 22 операции со статусом `DOC`, 38 — `DOC+LIVE`, 4 — `CONFLICT+LIVE`.
 
 Live API не вызывался, credentials не использовались, runtime-поведение не подтверждалось. Следующий шаг разрешён только после письменной приёмки задачи 0.1 PM/reviewer.
+
+
+### Задача 0.2 — подключение и квоты
+
+22.09.2026 выполнен консервативный live-протокол из девяти последовательных HTTPS-запросов к `direct.lptracker.ru` без business writes. Подтверждены: один login, использование token для `GET /projects` и обоих разрешённых тестовых проектов, logout и отклонение отозванного token; прикладные ошибки unauthenticated/invalid/revoked token и unknown route пришли как HTTP 200 + JSON error.
+
+Документальный лимит 3 req/s не проверялся burst-тестом и не считается runtime-фактом. Область квоты, egress IP, правило одного пользователя на IP, repeated login, token expiry и invalid-password/lockout не проверялись из-за нетестового аккаунта и ограничения безопасным request budget.
+
+Результат передан PM/reviewer. Следующая задача разрешена только после письменной приёмки 0.2.
