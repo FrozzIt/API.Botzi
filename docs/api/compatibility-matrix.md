@@ -1,4 +1,4 @@
-# Task 0.1 — документальная матрица 64 операций LPTracker
+| C08 | [src](https://docs.direct.lptracker.ru/contact/detail_delete/) | DELETE | `/contact/details/{detail_id}` | Удалить контактные данные | parent mapping required | yes | none-after-send | LIVE 0.3: plural path HTTP 200 JSON error 400; singular не запускался; post-error state не читался | CONFLICT+LIVE |
 
 Дата доступа: **2026-09-22**, Europe/Moscow. Это документальная сверка, не доказательство runtime-поведения.
 
@@ -80,6 +80,6 @@
 ## Итог по 64 строкам
 
 - 64 уникальных ID; 64 уникальных нормализованных пары method+path.
-- `LIVE`: 4; `DOC`: 20; `DOC+LIVE`: 37; `CONFLICT+LIVE`: 3; `UNAVAILABLE`: 0.
-- Три неразрешённых `CONFLICT+LIVE`: P10 (PUT против фактического GET в curl), C08 (`detail/details`), C11 (`details/field`). P02 подтверждён runtime на пути без trailing slash; slash-вариант не проверялся.
+- `LIVE`: 9; `DOC`: 18; `DOC+LIVE`: 34; `CONFLICT+LIVE`: 3; `UNAVAILABLE`: 0.
+- Три неразрешённых `CONFLICT+LIVE`: P10 (PUT против фактического GET в curl), C08 (`detail/details`; plural runtime вернул error 400, singular не проверен), C11 (`details/field`). P02 подтверждён runtime на пути без trailing slash; slash-вариант не проверялся.
 - Значение `DOC+LIVE` не опровергает наличие операции: оно означает, что документация подтверждает route, но не позволяет безопасно зафиксировать весь request/response/runtime-контракт.

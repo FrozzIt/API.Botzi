@@ -22,3 +22,11 @@ Live API не вызывался, credentials не использовались,
 Документальный лимит 3 req/s не проверялся burst-тестом и не считается runtime-фактом. Область квоты, egress IP, правило одного пользователя на IP, repeated login, token expiry и invalid-password/lockout не проверялись из-за нетестового аккаунта и ограничения безопасным request budget.
 
 Результат передан PM/reviewer. Следующая задача разрешена только после письменной приёмки 0.2.
+
+### Задача 0.3 — изоляция сложных объектов
+
+22.09.2026 выполнен один частичный live-run из 15 последовательных запросов. C01 без contact-фильтра получил error 400 в обоих тестовых проектах. Для двух новых synthetic contacts подтверждены parent project/detail mapping, отсутствие parent/project в direct C06, успешный C07 edit/readback. Plural C08 route вернул HTTP 200 + JSON error 400; singular route не пробовался.
+
+После STOP оба probe parent contacts удалены с JSON success и выполнен logout. Отдельный post-error GET detail и проверка каскада после parent delete не выполнялись. Staff и labels subsets не достигнуты; task/lead subset не запускался из-за недоказанной notification safety без safe test staff ID.
+
+Результат передан как **ARCHITECT REVIEW REQUIRED / BLOCKED dependent subset**. До решения по parent mapping/bootstrap details и безопасному staff/task fixture зависимая часть C06–C08/T01–T04 не может считаться закрытой; issue #4 остаётся открытым.

@@ -109,3 +109,13 @@ rg -o 'https?://[^)] ]+' docs/api/compatibility-matrix.md \
 Подтверждено runtime для ограниченного окна: один login success и token; authenticated `GET /projects`; чтение обоих разрешённых тестовых проектов по пути без trailing slash; logout success; отозванный token отклонён. Unauthenticated, synthetic invalid token, revoked token и неизвестный route вернули HTTP 200, валидный JSON `status=error` и safe codes 401/404. Redirect и HTML не наблюдались.
 
 Это не подтверждает весь request/response-контракт A01/A02/P01/P02. Quota scope, лимит 3 req/s, IP-ограничение, repeated login, token expiry, invalid-password/lockout и альтернативный host не проверялись из-за нетестового аккаунта и консервативного request budget.
+
+## Live update 0.3 — 2026-09-22
+
+[Подробный протокол](isolation-findings.md) фиксирует частичный live-run из 15 последовательных запросов в двух разрешённых тестовых проектах. Созданы два synthetic contact с двумя details; C03 подтвердил project/parent mapping, C06 не вернул parent/project, C07 edit и readback успешны. C01 без фильтра кроме `project_id` вернул application error 400 для обоих проектов.
+
+Plural C08 `DELETE /contact/details/{detail_id}` вернул HTTP 200 + JSON error code 400. Singular curl path не проверялся; post-error detail state отдельным GET не подтверждён. Оба probe parent contacts затем удалены с JSON success и token отозван, но каскад details отдельно не читался.
+
+STOP до `GET /staff` и labels означает, что staff, owner=0, observers, labels и transfer не получили новых live-фактов. Task writes намеренно не выполнялись: без safe test staff ID документация не гарантирует отсутствие notifications реальному owner.
+
+Предлагаемый статус — **ARCHITECT REVIEW REQUIRED / BLOCKED dependent subset**. Для existing/out-of-band detail по одному detail ID безопасный bootstrap ownership не доказан; staff/labels/tasks требуют отдельного решения и разрешённого продолжения. Это предложение, не само-приёмка.
