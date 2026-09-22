@@ -78,3 +78,75 @@ STOP reason: `DELETE /contact/details/{detail_id}` вернул документ
 2. нужен ли отдельный безопасный staff fixture/notification sandbox для owner/observer/tasks, а также новый ограниченный запуск labels/staff после принятия STOP-результата.
 
 Issue #4 не должен закрываться этим PR: acceptance criteria для staff, labels и tasks не достигнуты.
+## Rework 1 — singular C08, staff schema и labels
+
+**Live-окно:** 2026-09-22 11:05:25–11:05:49, Europe/Moscow  
+**Архитектурное основание:** [issue #4, decision 5773075314](https://github.com/FrozzIt/API.Botzi/issues/4#issuecomment-5773075314)
+
+### Границы запуска
+
+Выполнены только три разрешённых независимых subset: один fresh singular C08 probe, один read-only `GET /staff`, M01–M04 для новых labels в двух тестовых проектах. Task/owner/observer, calls, messages, webhooks, files, notifications, существующие объекты и cross-project mutations не выполнялись.
+
+Secret preflight подтвердил regular file текущего владельца, mode `600` и ровно шесть ожидаемых ключей. Один login и один logout; token хранился только в памяти. Запросы последовательные, пауза не менее 0,8 секунды, timeout 12 секунд, фактически **23 из 40**. Все ответы: HTTP 200, валидный JSON, без redirect/HTML. Фактический marker заменён на `<probe-marker>`; credentials, token, project/object/staff IDs и PII не логировались.
+
+### Redacted request sequence
+
+| Seq | Сценарий | Top-level | Safe error | Результат |
+|---:|---|---|---|---|
+| 1 | login | success | — | token получен в память |
+| 2 | C02 create fresh contact/detail, project A | success | — | один disposable parent/detail создан |
+| 3 | C03 mapping before singular | success | — | parent project совпал, detail присутствовал |
+| 4 | singular C08 `DELETE /contact/detail/{detail_id}` | error | 404 / not-found | ровно одна попытка, без retry и plural call |
+| 5 | C06 detail readback | success | — | detail существует |
+| 6 | C03 parent readback | success | — | parent существует, project совпал, detail присутствует |
+| 7 | C05 cleanup parent | success | — | disposable parent удалён |
+| 8 | S01 `GET /staff` | success | — | schema-only анализ, значения не сохранялись |
+| 9–10 | M02 lists A/B before create | success | — | count=0/0, object envelope |
+| 11–12 | M01 create label A/B | success | — | по одной новой label в каждом проекте |
+| 13–14 | M02 lists A/B after create | success | — | own=true, other=false, count=1/1 |
+| 15–16 | M03 edit own label A/B | success | — | response IDs совпали внутри процесса |
+| 17–18 | M02 lists A/B after edit | success | — | own present/name matched, other=false |
+| 19–20 | M04 delete own label A/B | success | — | обе удаления подтверждены |
+| 21–22 | M02 lists A/B after delete | success | — | обе probe labels отсутствуют в обоих списках |
+| 23 | logout | success | — | token отозван |
+
+Observed latency 898–1624 ms; это не performance test и не SLA. STOP condition: **нет**. Unknown/ambiguous write outcomes: **0**.
+
+### C08 verdict
+
+- **Факт, высокая уверенность:** trusted mapping свежего detail была доказана C02/C03 до удаления.
+- **Факт, высокая уверенность:** единственный singular `DELETE /contact/detail/{detail_id}` вернул HTTP 200 + JSON `status=error`, code 404.
+- **Факт, высокая уверенность:** последующие C06 и C03 подтвердили, что detail и parent сохранились, detail оставался в `details` того же project-matched parent. Следовательно, singular route в проверенном окне не удалил свежий detail.
+- **Факт, высокая уверенность по двум probe:** plural route ранее дал code 400, singular route дал code 404. Другие URL не подбирались.
+- **Архитектурное ограничение сохраняется:** C06–C08 допустимы только при доверенной mapping `detail_id → contact_id → project_id`; pre-existing/out-of-band detail по одному ID получает нейтральный отказ. Рабочий delete route runtime не найден; требуется официальный ответ поставщика.
+
+### Staff verdict
+
+`GET /staff` выполнен в единственной документированной account-scoped форме без project parameter. Result содержал **1** entry. Top-level entry schema keys: `created_at`, `id`, `job`, `last_login_at`, `name`, `type`; classes соответственно integer/string, без сохранения значений.
+
+Project-membership fields `project_id`, `project_ids`, `projects`, `last_project_id` отсутствовали; значения обоих разрешённых projects не наблюдались. Наличие sensitive fields: `name=true`, `job=true`, `email=false`, `phone=false`, `avatar=false`. Entry с `id=0` присутствовал — только boolean-факт; ID других entries не сохранялись.
+
+**Вывод, высокая уверенность:** endpoint account-scoped и не даёт доказуемого project membership. Positive owner/observer assignment не выполнялся. Наличие zero-ID entry не доказывает semantics `owner=0`; task subset остаётся заблокированным до безопасной staff fixture.
+
+### Labels verdict
+
+- **Факт, высокая уверенность:** M01 с документированным `title`, `color`, `project_id` создал по одной новой label в каждом тестовом проекте.
+- **Факт, высокая уверенность:** M02 runtime вернул object envelope, а не внешний array из документационного примера.
+- **Факт, высокая уверенность:** project-scoped lists до/после create/edit/delete доказали membership: own probe присутствовал только в своём проекте; probe другого проекта отсутствовал.
+- **Факт, высокая уверенность:** M03 ID-route успешно изменил только предварительно подтверждённую через M02 own label; list readback подтвердил новое name и неизменную project membership.
+- **Факт, высокая уверенность:** M04 удалил обе own labels; последующие project lists подтвердили отсутствие обеих. Cross-project mutation не выполнялась и не требуется для безопасного proxy rule: перед M03/M04 label ID сверяется через M02 разрешённого проекта.
+
+### Cleanup ledger rework-1
+
+| Тип | Создано | Cleanup | Осталось |
+|---|---:|---:|---:|
+| contact parent | 1 | 1 DELETE success | 0 известных active parents |
+| contact detail | 1 | 1 закрыт через parent DELETE | 0 parent-attached; cascade отдельно не читался |
+| labels | 2 | 2 DELETE success + list absence | 0 |
+| tasks/leads | 0 | 0 | 0 |
+
+Временный probe удалён; в secret-каталоге остался только исходный mode-600 файл.
+
+### Статус передачи
+
+Три разрешённых subset выполнены в согласованном объёме. Предлагаемый статус — **PM/architect review; Task 0.3 остаётся частично заблокированной**. Issue #4 не закрывается: task/owner/observer runtime требует безопасной staff fixture, а provider должен официально подтвердить project-scoped details bootstrap, перенос details между parents и рабочий delete route. Переход к 0.4 и service implementation этим отчётом не разрешается.
