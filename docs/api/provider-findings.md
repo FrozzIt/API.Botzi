@@ -130,3 +130,9 @@ Fresh mapped detail: singular `DELETE /contact/detail/{detail_id}` вернул 
 M01–M04 подтверждены на двух новых labels: project lists доказали own membership и отсутствие probe другого проекта; edit readback успешен; delete readback подтвердил отсутствие; cleanup complete. M02 runtime envelope был object, не внешний array документационного примера.
 
 Task 0.3 не объявляется завершённой: task/owner/observer subset требует safe staff fixture, а C08/provider bootstrap остаются блокерами. Предлагается повторный PM/architect review без перехода к 0.4.
+
+## Architecture scope proposal — 2026-09-23
+
+После этих наблюдений архитектор предложил для PM/заказчика v1 из 57 операций и deferred-набор из 7: `C08`, `S01`, `L11`, `L22`, `T01`, `T04`, `T05`. Это отдельное решение-кандидат: оно не меняет документальные источники, verification status или live-факты выше и не означает принятие 0.3/G0.
+
+Условия возврата deferred и ограничения C05, C06–C07, L01/L06, T02–T03 описаны в [реестре](../plans/proxy-api-endpoint-inventory.md#предложение-по-объёму-v1--на-review-pmзаказчика). Коды `400/404/501` остаются предметом согласования с CRM в 0.5.

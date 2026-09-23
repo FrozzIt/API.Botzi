@@ -4,6 +4,31 @@
 
 Найдено **64 операции method + path**. Это реестр для реализации и проверки, а не заявление о готовой поддержке. Изучены основное оглавление, отдельные страницы и дополнительные методы истории сообщений/звонков. На этапе 0 команда сверяет реестр с работающим API и поставщиком; обнаруженные документированные методы добавляются в объём. Методы внутренних веб-интерфейсов и будущие изменения API автоматически в этот снимок не входят.
 
+## Предложение по объёму v1 — на review PM/заказчика
+
+Архитектор предложил включить в первую версию **57 операций** и отложить **7 операций**. Это классификация для согласования в задачах 0.3 и 0.5, а не принятый продуктовый контракт и не статус фактической проверки метода. Все 64 ID и их источники ниже сохраняются.
+
+- Предлагаемый `v1` (57): `A01–A02`, `P01–P14`, `C01–C07`, `C09–C12`, `V01–V04`, `L01–L10`, `L12–L21`, `T02–T03`, `M01–M04`.
+- Предлагаемый `deferred` (7): `C08`, `L11`, `L22`, `S01`, `T01`, `T04`, `T05`.
+
+| ID | Почему отложен | Условие возврата в scope |
+|---|---|---|
+| `C08` | Оба документированных route дали application errors; рабочее удаление и безопасный bootstrap ownership не доказаны | Поставщик подтверждает рабочий delete route и способ связать detail с parent/project; архитектор принимает server-side ownership rule |
+| `S01` | Runtime endpoint account-scoped и не содержит project-membership fields | Архитектор утверждает доказуемый источник project membership и правила фильтрации/очистки либо изоляцию upstream-аккаунтов |
+| `L11` | Project membership сотрудника и семантика `owner=0` не доказаны | Поставщик или принятый server-side справочник даёт проверяемое членство; архитектор утверждает `owner=0` и нейтральные отказы |
+| `L22` | В запросе нет lead/project; область массовой отметки account/token-scoped не доказана | Поставщик подтверждает project-scoped семантику либо архитектор утверждает иной безопасный механизм |
+| `T01` | Без safe staff fixture не доказаны owner/observers, visibility и отсутствие нежелательных уведомлений | Архитектор утверждает staff/notification contract, после чего ограниченный runtime-тест подтверждает проект и получателей |
+| `T04` | Не доказаны staff/observer rules, уведомления и безопасная семантика переноса | Приняты правила staff/notifications; runtime подтверждает project check и запрет межпроектного переноса до записи |
+| `T05` | Без безопасного task lifecycle не подтверждена project check перед удалением | После допуска T01/T04 создана безопасная fixture и runtime подтверждает чтение проекта до delete |
+
+Ограничения оставшихся v1-операций:
+
+- `C05` остаётся в v1 только с проверкой проекта до удаления. Успешный cleanup родителя не доказывает все каскадные эффекты; они остаются отдельной contract-проверкой.
+- `C06–C07` разрешены только для доверенной server-side mapping `detail → parent → project` с повторной проверкой родителя. Detail, известный только по собственному ID, получает нейтральный отказ.
+- `L01/L06` не должны принимать неподтверждённое назначение `owner` или `observers`; такие поля отклоняются или исключаются согласно контракту, который должен быть утверждён в 0.5.
+- `T02–T03` остаются в v1, но до выпуска требуют проверки проекта и очистки вложенных staff fields.
+- Конкретные внешние коды `400/404/501` для deferred/ограниченных сценариев являются предложением и согласуются с CRM в 0.5.
+
 Уверенность в наличии перечисленных операций в документации — высокая. В точности спорных путей и фактических форматах — средняя или низкая там, где отмечено расхождение. Каждый документированный метод должен получить тест успешного сценария, ошибок, изоляции проекта и отсутствия утечек. Непроверенный/временно закрытый метод не засчитывается как реализованный.
 
 Во всех строках проект определяется по клиентскому конфигу. `project_id` из запроса лишь проверяется на совпадение. Объекты и вложенные ссылки также проверяются: наличие разрешённого проекта в URL само по себе недостаточно.
@@ -42,9 +67,9 @@
 | C02 | `POST /contact` | Проект в body, поля и контактные данные; [источник](https://docs.direct.lptracker.ru/contact/create/) |
 | C03 | `GET /contact/{contact_id}` | Проект из проверенного объекта; [источник](https://docs.direct.lptracker.ru/contact/get/) |
 | C04 | `PUT /contact/{contact_id}` | Проверить семантику `clear_contacts`, пустых значений, `field`/`fields`; [источник](https://docs.direct.lptracker.ru/contact/edit/) |
-| C05 | `DELETE /contact/{contact_id}` | Проверить владение и каскадные эффекты удаления; [источник](https://docs.direct.lptracker.ru/contact/delete/) |
-| C06 | `GET /contact/details/{detail_id}` | В примере ответа нет проекта/родителя: нужен доказанный индекс принадлежности; [источник](https://docs.direct.lptracker.ru/contact/detail_get/) |
-| C07 | `PUT /contact/details/{detail_id}` | Перед записью проверить detail через его контакт; [источник](https://docs.direct.lptracker.ru/contact/detail_edit/) |
+| C05 | `DELETE /contact/{contact_id}` | До delete проверить проект родителя; успешный cleanup не доказывает каскады, их проверить отдельно; [источник](https://docs.direct.lptracker.ru/contact/delete/) |
+| C06 | `GET /contact/details/{detail_id}` | Только trusted mapping detail→parent→project + повторная проверка parent; ID-only получает нейтральный отказ; [источник](https://docs.direct.lptracker.ru/contact/detail_get/) |
+| C07 | `PUT /contact/details/{detail_id}` | Та же trusted mapping и parent recheck обязательны до записи; ID-only получает нейтральный отказ; [источник](https://docs.direct.lptracker.ru/contact/detail_edit/) |
 | C08 | `DELETE /contact/details/{detail_id}` | Спорный путь: пример использует `/contact/detail/{id}`; подтвердить; [источник](https://docs.direct.lptracker.ru/contact/detail_delete/) |
 | C09 | `GET /contact/{contact_id}/leads` | Контакт и каждый возвращённый лид принадлежат проекту; [источник](https://docs.direct.lptracker.ru/contact/leads_get/) |
 | C10 | `GET /contact/{contact_id}/field/{field_id}` | Контакт + принадлежность поля проекту; [источник](https://docs.direct.lptracker.ru/contact/field_get/) |
@@ -64,12 +89,12 @@
 
 | ID | Метод и путь | Проверка/особенность |
 |---|---|---|
-| L01 | `POST /lead` | Проверить контакт/вложенный контакт, просмотр, шаг, owner, поля, платежи; callback запускает звонок; [источник](https://docs.direct.lptracker.ru/lead/create/) |
+| L01 | `POST /lead` | Проверить контакт/вложенный контакт, просмотр, шаг, поля, платежи; неподтверждённые owner/observers не назначать; callback запускает звонок; [источник](https://docs.direct.lptracker.ru/lead/create/) |
 | L02 | `POST /custom/{project_id}/create` | Создание поля проекта; [источник](https://docs.direct.lptracker.ru/lead/custom_create/) |
 | L03 | `PATCH /custom/{project_id}/{custom_id}/add-category` | Проверить принадлежность поля; [источник](https://docs.direct.lptracker.ru/lead/custom_add_option/) |
 | L04 | `GET /lead/{lead_id}` | Проект из вложенного контакта; [источник](https://docs.direct.lptracker.ru/lead/get/) |
 | L05 | `GET /lead/{project_id}/list` | Пагинация, сортировка, фильтры, лиды/сделки; [источник](https://docs.direct.lptracker.ru/lead/list/) |
-| L06 | `PUT /lead/{lead_id}` | Лид и связанные сущности; [источник](https://docs.direct.lptracker.ru/lead/edit/) |
+| L06 | `PUT /lead/{lead_id}` | Лид и связанные сущности; неподтверждённые owner/observers не назначать; [источник](https://docs.direct.lptracker.ru/lead/edit/) |
 | L07 | `DELETE /lead/{lead_id}` | Проверка до удаления; [источник](https://docs.direct.lptracker.ru/lead/delete/) |
 | L08 | `POST /lead/{lead_id}/call` | Реальный звонок, без слепого повтора; [источник](https://docs.direct.lptracker.ru/lead/call/) |
 | L09 | `POST /lead/{lead_id}/file` | JSON/Base64, поле и лид, размер файла; [источник](https://docs.direct.lptracker.ru/lead/file_upload/) |
@@ -98,8 +123,8 @@
 | ID | Метод и путь | Проверка/особенность |
 |---|---|---|
 | T01 | `POST /task` | Проект, лид, owner, observers, labels, режим visibility и уведомления; [источник](https://docs.direct.lptracker.ru/task/create/) |
-| T02 | `GET /task/{task_id}` | Проект задачи и вложенные профили; [источник](https://docs.direct.lptracker.ru/task/get/) |
-| T03 | `GET /task/{project_id}/list` | Проект, фильтры, пагинация, вложенные last_project_id и avatar; [источник](https://docs.direct.lptracker.ru/task/list/) |
+| T02 | `GET /task/{task_id}` | Проверить проект задачи и очистить вложенные staff fields; [источник](https://docs.direct.lptracker.ru/task/get/) |
+| T03 | `GET /task/{project_id}/list` | Проверить проект, фильтры и пагинацию; очистить вложенные staff fields, включая last_project_id/avatar; [источник](https://docs.direct.lptracker.ru/task/list/) |
 | T04 | `PUT /task/{task_id}` | Проект до изменения + новый проект в body; межпроектный перенос запрещён; [источник](https://docs.direct.lptracker.ru/task/edit/) |
 | T05 | `DELETE /task/{task_id}` | Проверить проект до удаления; [источник](https://docs.direct.lptracker.ru/task/delete/) |
 
