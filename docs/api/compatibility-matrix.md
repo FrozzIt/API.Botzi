@@ -34,8 +34,8 @@
 | C03 | [src](https://docs.direct.lptracker.ru/contact/get/) | GET | `/contact/{contact_id}` | Контакт по ID | object.project | no | read≤1 | LIVE 0.3: parent reads probes вернули ожидаемые project и detail | LIVE |
 | C04 | [src](https://docs.direct.lptracker.ru/contact/edit/) | PUT | `/contact/{contact_id}` | Изменить контакт | object.project | yes | none-after-send | F: `field` в body против `fields` в curl; clear/empty | DOC+LIVE |
 | C05 | [src](https://docs.direct.lptracker.ru/contact/delete/) | DELETE | `/contact/{contact_id}` | Удалить контакт | object.project before delete | yes | none-after-send | LIVE 0.3: cleanup DELETE success для обоих probe parents; detail cascade отдельно не читался | LIVE |
-| C06 | [src](https://docs.direct.lptracker.ru/contact/detail_get/) | GET | `/contact/details/{detail_id}` | Получить контактные данные | trusted parent mapping + parent recheck; ID-only deny | no | read≤1 | LIVE 0.3: direct result без parent/project; mapping доказан только через C02/C03 для новых probes | LIVE |
-| C07 | [src](https://docs.direct.lptracker.ru/contact/detail_edit/) | PUT | `/contact/details/{detail_id}` | Изменить контактные данные | trusted parent mapping + parent recheck; ID-only deny | yes | none-after-send | LIVE 0.3: plural PUT с `value` успешен, readback совпал; описание `volume` ошибочно | LIVE |
+| C06 | [src](https://docs.direct.lptracker.ru/contact/detail_get/) | GET | `/contact/details/{detail_id}` | Получить контактные данные | parent mapping; direct result без parent/project | no | read≤1 | LIVE 0.3: direct result без parent/project; mapping доказан только через C02/C03 для новых probes | LIVE |
+| C07 | [src](https://docs.direct.lptracker.ru/contact/detail_edit/) | PUT | `/contact/details/{detail_id}` | Изменить контактные данные | parent mapping required | yes | none-after-send | LIVE 0.3: plural PUT с `value` успешен, readback совпал; описание `volume` ошибочно | LIVE |
 | C08 | [src](https://docs.direct.lptracker.ru/contact/detail_delete/) | DELETE | `/contact/details/{detail_id}` | Удалить контактные данные | trusted parent mapping required | yes | none-after-send | LIVE 0.3: plural HTTP 200/error 400; singular HTTP 200/error 404; readback подтвердил detail retained; рабочего route нет | CONFLICT+LIVE |
 | C09 | [src](https://docs.direct.lptracker.ru/contact/leads_get/) | GET | `/contact/{contact_id}/leads` | Лиды контакта | parent contact; лиды без project в примере | no | read≤1 | O,E | DOC+LIVE |
 | C10 | [src](https://docs.direct.lptracker.ru/contact/field_get/) | GET | `/contact/{contact_id}/field/{field_id}` | Поле контакта | parent contact + project fields | no | read≤1 | E | DOC |
@@ -45,12 +45,12 @@
 | V02 | [src](https://docs.direct.lptracker.ru/view/create/) | POST | `/view` | Создать просмотр | body.project | yes | none-after-send | E: visitor/real_visitor не формализованы | DOC+LIVE |
 | V03 | [src](https://docs.direct.lptracker.ru/view/edit/) | PUT | `/view/{view_id}` | Изменить просмотр | object.project before write | yes | none-after-send | E | DOC |
 | V04 | [src](https://docs.direct.lptracker.ru/view/delete/) | DELETE | `/view/{view_id}` | Удалить просмотр | object.project before delete | yes | none-after-send | E: каскад не описан | DOC+LIVE |
-| L01 | [src](https://docs.direct.lptracker.ru/lead/create/) | POST | `/lead` | Создать лид/сделку | contact.project; unverified owner/observers denied | yes | none-after-send | E: вложенные contact/view/custom/payment/owner; callback | DOC+LIVE |
+| L01 | [src](https://docs.direct.lptracker.ru/lead/create/) | POST | `/lead` | Создать лид/сделку | contact.project or body contact.project | yes | none-after-send | E: вложенные contact/view/custom/payment/owner; callback | DOC+LIVE |
 | L02 | [src](https://docs.direct.lptracker.ru/lead/custom_create/) | POST | `/custom/{project_id}/create` | Создать поле лида | path.project | yes | none-after-send | W: пример успеха — сырой объект без global envelope | DOC+LIVE |
 | L03 | [src](https://docs.direct.lptracker.ru/lead/custom_add_option/) | PATCH | `/custom/{project_id}/{custom_id}/add-category` | Добавить категории поля | path.project + parent field | yes | none-after-send | E | DOC |
 | L04 | [src](https://docs.direct.lptracker.ru/lead/get/) | GET | `/lead/{lead_id}` | Лид по ID | nested contact.project | no | read≤1 | E | DOC |
 | L05 | [src](https://docs.direct.lptracker.ru/lead/list/) | GET | `/lead/{project_id}/list` | Список лидов/сделок | path.project | no | read≤1 | W: страница показывает raw array, global docs требуют status | DOC+LIVE |
-| L06 | [src](https://docs.direct.lptracker.ru/lead/edit/) | PUT | `/lead/{lead_id}` | Изменить лид | nested contact.project; unverified owner/observers denied | yes | none-after-send | E: custom/map/owner types | DOC+LIVE |
+| L06 | [src](https://docs.direct.lptracker.ru/lead/edit/) | PUT | `/lead/{lead_id}` | Изменить лид | nested contact.project before write | yes | none-after-send | E: custom/map/owner types | DOC+LIVE |
 | L07 | [src](https://docs.direct.lptracker.ru/lead/delete/) | DELETE | `/lead/{lead_id}` | Удалить лид | nested contact.project before delete | yes | none-after-send | E: каскад не описан | DOC+LIVE |
 | L08 | [src](https://docs.direct.lptracker.ru/lead/call/) | POST | `/lead/{lead_id}/call` | Инициировать звонок | parent lead | yes | none-after-send | E: телефония/дубликаты | DOC+LIVE |
 | L09 | [src](https://docs.direct.lptracker.ru/lead/file_upload/) | POST | `/lead/{lead_id}/file` | Загрузить Base64-файл | parent lead + custom field | yes | none-after-send | E: размер/MIME не ограничены | DOC+LIVE |
@@ -69,8 +69,8 @@
 | L22 | [src](https://docs.direct.lptracker.ru/max/message_status/) | POST | `/max/messageStatus` | Отметить доставку/прочтение MAX-сообщений | account/token scoped; lead/project absent | yes | none-after-send | O,E: project isolation и область массовой отметки не доказаны | DOC+LIVE |
 | S01 | [src](https://docs.direct.lptracker.ru/staff/list/) | GET | `/staff` | Сотрудники аккаунта | account; project membership absent runtime | no | read≤1 | LIVE 0.3 rework-1: count=1, schema-only; project fields отсутствуют; zero-ID entry present; PII values не сохранялись | LIVE |
 | T01 | [src](https://docs.direct.lptracker.ru/task/create/) | POST | `/task` | Создать задачу | body.project + referenced lead/staff/labels | yes | none-after-send | F,O: body `title/text`, описание `task_title/task_text`, curl добавляет `contact_id`; visibility/notifications | DOC+LIVE |
-| T02 | [src](https://docs.direct.lptracker.ru/task/get/) | GET | `/task/{task_id}` | Задача по ID | object.project + nested staff redaction | no | read≤1 | O: вложенные staff fields/URLs | DOC+LIVE |
-| T03 | [src](https://docs.direct.lptracker.ru/task/list/) | GET | `/task/{project_id}/list` | Список задач | path.project + nested staff redaction | no | read≤1 | W: raw array против global status envelope; O staff | DOC+LIVE |
+| T02 | [src](https://docs.direct.lptracker.ru/task/get/) | GET | `/task/{task_id}` | Задача по ID | object.project | no | read≤1 | O: вложенные staff fields/URLs | DOC+LIVE |
+| T03 | [src](https://docs.direct.lptracker.ru/task/list/) | GET | `/task/{project_id}/list` | Список задач | path.project | no | read≤1 | W: raw array против global status envelope; O staff | DOC+LIVE |
 | T04 | [src](https://docs.direct.lptracker.ru/task/edit/) | PUT | `/task/{task_id}` | Изменить задачу | object.project + body.project | yes | none-after-send | F,O: body `title/text`, описание `task_title/task_text`, curl добавляет `contact_id`; перенос/visibility | DOC+LIVE |
 | T05 | [src](https://docs.direct.lptracker.ru/task/delete/) | DELETE | `/task/{task_id}` | Удалить задачу | object.project before delete | yes | none-after-send | E | DOC |
 | M01 | [src](https://docs.direct.lptracker.ru/label/create/) | POST | `/label` | Создать метку | body.project + M02 list evidence | yes | none-after-send | LIVE 0.3 rework-1: `title` принят; по одной probe label создано в A/B, membership подтверждён M02 | LIVE |
@@ -82,8 +82,9 @@
 
 - `v1` (57): `A01–A02`, `P01–P14`, `C01–C07`, `C09–C12`, `V01–V04`, `L01–L10`, `L12–L21`, `T02–T03`, `M01–M04`.
 - `deferred` (7): `C08`, `L11`, `L22`, `S01`, `T01`, `T04`, `T05`.
+- До решения 0.5 действующей базой остаются все 64 строки и исходные критерии будущих задач; классификация 57/7 не меняет их автоматически.
 - Пересечений между наборами нет; вместе они покрывают все 64 строки матрицы. Причины и условия возврата каждого deferred ID зафиксированы в [реестре](../plans/proxy-api-endpoint-inventory.md#предложение-по-объёму-v1--на-review-pmзаказчика).
-- Для `C05`, `C06–C07`, `L01/L06` и `T02–T03` действуют ограничения из реестра. Они не повышают verification status и не превращают неподтверждённое поведение в контракт.
+- Для `C05`, `C06–C07`, `L01/L06` и `T02–T03` предложены ограничения из реестра. До решения 0.5 они не меняют действующий контракт, не повышают verification status и не превращают неподтверждённое поведение в факт.
 - Внешние коды `400/404/501` остаются вариантом для согласования с CRM в задаче 0.5.
 
 ## Итог по 64 строкам
