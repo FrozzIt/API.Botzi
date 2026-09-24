@@ -136,3 +136,9 @@ Task 0.3 не объявляется завершённой: task/owner/observer
 После этих наблюдений архитектор предложил для PM/заказчика v1 из 57 операций и deferred-набор из 7: `C08`, `S01`, `L11`, `L22`, `T01`, `T04`, `T05`. Это отдельное решение-кандидат: оно не меняет документальные источники, verification status или live-факты выше и не означает принятие 0.3/G0.
 
 Условия возврата deferred и ограничения C05, C06–C07, L01/L06, T02–T03 описаны в [реестре](../plans/proxy-api-endpoint-inventory.md#предложение-по-объёму-v1--на-review-pmзаказчика). Коды `400/404/501` остаются предметом согласования с CRM в 0.5.
+
+## Task 0.4 events/media review — 2026-09-24
+
+[Отчёт](events-media-findings.md) фиксирует документальные контракты P05–P08, двух callback payload, L10 и L21 без изменения продуктового scope. Официальные страницы подтверждают формы subscription list и payload fields, Base64-файл L10 и внешний `record` в L21, но не подтверждают callback signature/delivery guarantees, адресную мутацию одной подписки либо delete verification.
+
+После первоначального credential blocker повторный helper preflight успешен. Выполнено 27 последовательных auth/read/logout API-вызовов и один однобайтовый media Range GET. P06: A count=1, B count=0; P08: A/B count=0. Существующая запись не изменялась, P05/P07 не вызывались. Для трёх доказанно принадлежащих A/B лидов L21 вернул пять HTTPS records на документированном host; одна запись ответила `206` и `Content-Range` без redirect. L10 не вызывался: пять verified file fields не дали структурированного file ID. Credentials, IDs, PII и URL не сохранялись; звонки/уведомления не инициировались. Результат передан на PM review; открытые условия перечислены для 0.5/G0.

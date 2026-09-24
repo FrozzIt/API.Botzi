@@ -45,3 +45,13 @@ Singular C08 вернул JSON error 404; C06/C03 readback доказал, чт�
 В предложенном v1 остаётся `C05` с project precheck; успешный cleanup не доказывает все каскады. `C06–C07` допускаются только по доверенной server-side mapping detail→parent→project с повторной проверкой parent; detail только по ID получает нейтральный отказ. В `L01/L06` запрещено неподтверждённое назначение owner/observers. `T02–T03` требуют project check и очистки вложенных staff fields.
 
 Коды `400/404/501` не утверждены: их должен согласовать CRM-контракт в 0.5. Порядок `0.3 → 0.4 → 0.5 → G0 → 1.1` не меняется.
+
+#### Приёмка 0.3 и статус architect review
+
+PM принял задачу 0.3 по commit `a8826cadd8362526573b75287c8af6c9d9ed6e5a`. По решению заказчика повторное ревью архитектора отложено до общего пакета 0.5/G0; статус architecture `APPROVED` не получен. Это разрешает начать 0.4 по процессу, но не утверждает продуктовый scope 57/7 и не заменяет архитектурную точку G0.
+
+### Задача 0.4 — события и медиа
+
+24.09.2026 выполнена документальная и ограниченная read-only проверка P05–P08, двух callback-схем, L10 и L21. Результат: [events-media-findings.md](../api/events-media-findings.md). После первоначального credential blocker повторный helper preflight успешен. Выполнено 27 LPTracker API-вызовов в четырёх сессиях, все tokens отозваны logout, плюс один однобайтовый Range GET. P06/P08 прочитаны до любых writes: в P06 проекта A есть одна существующая регистрация, остальные списки пусты. P05/P07 не вызывались. L21/Range подтверждены на трёх owned leads и одной записи; L10 не вызывался из-за отсутствия доказанного file ID. Credentials, IDs, PII и URL не сохранялись. Звонки и уведомления не инициировались.
+
+Документация и live-read не подтверждают upstream callback authentication/delivery semantics, адресную мутацию конкретной подписки, delete verification и parent source file ID для L10. Для L21 одна выборка подтверждает documented host и Range `206`, но не общий redirect/error/expiry/MIME contract. Эти пункты переданы как предметные блокеры 0.5/G0; 0.4 не объявляется принятой до PM review.
