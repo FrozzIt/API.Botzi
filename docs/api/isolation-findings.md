@@ -150,3 +150,11 @@ Project-membership fields `project_id`, `project_ids`, `projects`, `last_project
 ### Статус передачи
 
 Три разрешённых subset выполнены в согласованном объёме. Предлагаемый статус — **PM/architect review; Task 0.3 остаётся частично заблокированной**. Issue #4 не закрывается: task/owner/observer runtime требует безопасной staff fixture, а provider должен официально подтвердить project-scoped details bootstrap, перенос details между parents и рабочий delete route. Переход к 0.4 и service implementation этим отчётом не разрешается.
+
+## Архитектурное предложение после live-наблюдений — на review
+
+Это решение-кандидат не меняет факты и ledgers выше. Предлагается v1 из 57 операций и deferred-набор `C08`, `S01`, `L11`, `L22`, `T01`, `T04`, `T05`. Условия возврата каждого ID зафиксированы в [реестре](../plans/proxy-api-endpoint-inventory.md#предложение-по-объёму-v1--на-review-pmзаказчика).
+
+Для оставшихся операций граница доступа предлагается следующая: C05 — project precheck без утверждения каскадов; C06–C07 — только trusted mapping и повторная parent check; L01/L06 — без неподтверждённых owner/observers; T02–T03 — project check и redaction вложенных staff fields. Detail, известный только по ID, получает нейтральный отказ. Точный внешний код (`400`, `404` или `501`) остаётся вопросом CRM-контракта в 0.5.
+
+Предложение не означает принятие 0.3 или G0 и не разрешает переход к 0.4 до решения PM.

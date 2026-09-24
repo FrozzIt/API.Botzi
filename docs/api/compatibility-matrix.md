@@ -8,6 +8,7 @@
 - Ownership: `account` — API не даёт проектной привязки; `path/query/body.project` — проект указан прямо; `object.project` — проект выводится из документированной модели объекта; `parent` — требуется проверка родительского объекта/справочника.
 - Side effect: `no`, `yes`, `session`.
 - Retry: `read≤1` — только безопасное чтение, максимум один ограниченный повтор; `none-after-send` — не повторять автоматически после отправки; `session-special` — координированное управление сессией.
+- Предлагаемый release scope не заменяет verification status: `v1`/`deferred` показывает продуктовый объём на review, а `LIVE`/`DOC*` — состояние доказательств метода.
 - Неопределённость: `E` — документация даёт пример, но не полную схему/null/лимиты/ошибки; `W` — спорная оболочка/статус ответа; `F` — конфликт имени поля; `P` — конфликт пути; `O` — ownership не доказуем из ответа операции; `S` — расхождение SDK и HTTP; `T` — trailing slash; `—` — специальных расхождений сверх `E` не найдено.
 
 | ID | Source | Method | Path | Назначение | Ownership evidence | Side effect | Retry | Req/resp uncertainty | Verification status |
@@ -76,6 +77,15 @@
 | M02 | [src](https://docs.direct.lptracker.ru/label/list/) | GET | `/label/{project_id}/list` | Список меток | path.project | no | read≤1 | LIVE 0.3 rework-1: runtime object envelope; own probe only, other-project probe absent | LIVE |
 | M03 | [src](https://docs.direct.lptracker.ru/label/edit/) | PUT | `/label/{label_id}` | Изменить метку | ID prechecked by M02 project list | yes | none-after-send | LIVE 0.3 rework-1: own A/B edits success; project-list readback name matched и membership сохранилась | LIVE |
 | M04 | [src](https://docs.direct.lptracker.ru/label/delete/) | DELETE | `/label/{label_id}` | Удалить метку | ID prechecked by M02 project list | yes | none-after-send | LIVE 0.3 rework-1: own A/B deletes success; project-list readback absence; cleanup complete | LIVE |
+
+## Предложенный release scope — не принят
+
+- `v1` (57): `A01–A02`, `P01–P14`, `C01–C07`, `C09–C12`, `V01–V04`, `L01–L10`, `L12–L21`, `T02–T03`, `M01–M04`.
+- `deferred` (7): `C08`, `L11`, `L22`, `S01`, `T01`, `T04`, `T05`.
+- До решения 0.5 действующей продуктовой базой остаются все 64 строки и исходные критерии будущих задач; классификация 57/7 не меняет их автоматически.
+- Пересечений между наборами нет; вместе они покрывают все 64 строки матрицы. Причины и условия возврата каждого deferred ID зафиксированы в [реестре](../plans/proxy-api-endpoint-inventory.md#предложение-по-объёму-v1--на-review-pmзаказчика).
+- Product scope ещё не утверждён, но security-граница обязательна уже сейчас: без доказанной принадлежности операция не выполняется и данные не выдаются. Для `C05`, `C06–C07`, `L01/L06` и `T02–T03` реестр предлагает конкретные правила, требующие письменной приёмки в 0.3; если метод войдёт в v1, принятые проверки изоляции обязательны при реализации. Это не повышает verification status и не превращает неподтверждённое поведение в факт.
+- Внешние коды `400/404/501` остаются вариантом для согласования с CRM в задаче 0.5.
 
 ## Итог по 64 строкам
 
