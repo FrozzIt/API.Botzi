@@ -137,8 +137,8 @@ Task 0.3 не объявляется завершённой: task/owner/observer
 
 Условия возврата deferred и ограничения C05, C06–C07, L01/L06, T02–T03 описаны в [реестре](../plans/proxy-api-endpoint-inventory.md#предложение-по-объёму-v1--на-review-pmзаказчика). Коды `400/404/501` остаются предметом согласования с CRM в 0.5.
 
-## Task 0.4 document review — 2026-09-24
+## Task 0.4 events/media review — 2026-09-24
 
-[Отчёт](events-media-findings.md) фиксирует документальные контракты P05–P08, двух callback payload, L10 и L21 без изменения продуктового scope. Официальные страницы подтверждают формы subscription list и payload fields, Base64-файл L10 и внешний `record` в L21, но не подтверждают callback signature/delivery guarantees, адресную мутацию одной подписки, delete verification либо media redirects/headers/Range.
+[Отчёт](events-media-findings.md) фиксирует документальные контракты P05–P08, двух callback payload, L10 и L21 без изменения продуктового scope. Официальные страницы подтверждают формы subscription list и payload fields, Base64-файл L10 и внешний `record` в L21, но не подтверждают callback signature/delivery guarantees, адресную мутацию одной подписки либо delete verification.
 
-Live API calls не выполнялись. Локальный preflight разрешённого credential helper с `/usr/bin/true` завершился с exit code `1` и ошибкой `ERROR: LPTracker credential is unavailable`; credential не извлекался, environment не выводился. Контролируемый receiver/fixtures также недоступны. P05/P07 не вызывались до P06/P08, поэтому существующие подписки не затронуты. Никакие звонки/уведомления не инициировались. Результат передан на PM review; открытые условия перечислены для 0.5/G0.
+После первоначального credential blocker повторный helper preflight успешен. Выполнено 27 последовательных auth/read/logout API-вызовов и один однобайтовый media Range GET. P06: A count=1, B count=0; P08: A/B count=0. Существующая запись не изменялась, P05/P07 не вызывались. Для трёх доказанно принадлежащих A/B лидов L21 вернул пять HTTPS records на документированном host; одна запись ответила `206` и `Content-Range` без redirect. L10 не вызывался: пять verified file fields не дали структурированного file ID. Credentials, IDs, PII и URL не сохранялись; звонки/уведомления не инициировались. Результат передан на PM review; открытые условия перечислены для 0.5/G0.

@@ -2,7 +2,7 @@
 
 **Дата документальной проверки:** 2026-09-24, Europe/Moscow
 
-**Статус:** передано на PM review; документальная часть выполнена, live subsets не запускались
+**Статус:** передано на PM review; документальная часть и безопасные read-only subsets выполнены, write/callback delivery и L10 не запускались
 
 **Объём:** P05–P08, две callback-схемы, L10 и L21. Продуктовый scope 57/7 не изменяется и остаётся решением 0.5.
 
@@ -10,9 +10,18 @@
 
 Проверены официальные страницы P05–P08, схемы callback лида и структуры CRM, L10, L21, а также связанные P03/P11. Ниже `DOC` означает факт официальной документации, `LIVE` — результат авторизованного запроса к LPTracker.
 
-**Live API calls: 0.** Перед live-проверкой выполнен только локальный preflight разрешённого credential helper с `/usr/bin/true`; он завершился с exit code `1` и обезличенной ошибкой `ERROR: LPTracker credential is unavailable`. Credential не извлекался и environment не выводился. Контролируемый receiver и заранее разрешённые file/call fixtures также не переданы. Поэтому нельзя было сначала безопасно прочитать существующие подписки P06/P08, доказать, что запись P05/P07 затронет только нашу регистрацию, либо проверить media без риска утечки исходного URL/PII. P05/P07, callback delivery, L10/L21 и загрузка media не выполнялись. Звонки и уведомления не инициировались.
+Первый preflight разрешённого credential helper с `/usr/bin/true` завершился с exit code `1` и обезличенной ошибкой `ERROR: LPTracker credential is unavailable`. После восстановления доступа повторный preflight завершился с exit code `0`. Credential не извлекался, environment и исходные ответы не выводились.
 
-Следствие, высокая уверенность: существующие подписки не изменялись — ни одного upstream write не было. Официальные страницы читались как документация; это не live-проверка API.
+Выполнено **27 LPTracker API-вызовов** в четырёх коротких авторизованных сессиях и один отдельный media Range GET. Все API-вызовы были последовательными, только read/auth/logout; каждая сессия завершилась успешным logout. Локальная sandbox-попытка до разрешения network egress upstream не достигла и в 27 вызовов не включена.
+
+| Run | Вызовы | Безопасный результат |
+|---|---:|---|
+| S1 subscriptions | 6 | login → P06/P08 для A/B → logout; четыре read успешны |
+| M1 calls/media | 10 API + 1 media GET | login → L05×2 → L04×3 → L21×3 → logout; один `Range: bytes=0-0` |
+| F0 file discovery | 3 | login → L05 → logout; локальный parser остановился на envelope, L10 не вызывался |
+| F1 file discovery | 8 | login → L05 → L04×5 → logout; пять file-полей без структурированного file ID, L10 не вызывался |
+
+Следствие, высокая уверенность: существующие подписки не изменялись — upstream write не было. P05/P07, callback delivery, L10, звонки и уведомления не выполнялись. Project/object IDs, subscription values, PII, token и исходные media URL не сохранялись в Git и не выводились.
 
 ## 2. Callback лида
 
@@ -112,11 +121,11 @@
 | ID | DOC-факт | LIVE | Решение/блокер |
 |---|---|---|---|
 | P05 | `PUT /project/{project_id}/callback-url`, body `url` + optional `name`, success envelope; пустой `url` отключает callback | Не выполнялся | Нет callback ID в write-route/body; add/update/replace и область empty-url не доказаны |
-| P06 | `GET /project/{project_id}/callback-url` возвращает `result[]` с `id`, `name`, `url` | Не выполнялся | Документация показывает upstream URL; публично отдавать можно только локальную клиентскую настройку |
+| P06 | `GET /project/{project_id}/callback-url` возвращает `result[]` с `id`, `name`, `url` | A: один объект; B: пусто; HTTP 200/success | Объект A также содержит `created_at/site_id/type/updated_at`; значения и URL не сохранялись |
 | P07 | `PUT /project/{project_id}/project-callback-url`, та же форма для CRM structure callback | Не выполнялся | Те же неразрешённые semantics адресной мутации |
-| P08 | `GET /project/{project_id}/project-callback-url` возвращает `result[]` с `id`, `name`, `url` | Не выполнялся | Ownership конкретной регистрации по ответу не доказан |
+| P08 | `GET /project/{project_id}/project-callback-url` возвращает `result[]` с `id`, `name`, `url` | A/B: пустые списки; HTTP 200/success | Пустой список не доказывает semantics будущей адресной мутации |
 
-Без live read P06/P08 нельзя подтвердить текущее состояние. Даже после read официальная запись P05/P07 не принимает `id`, поэтому документация не доказывает, что можно изменить/отключить только нашу строку. До ответа поставщика или безопасного live-протокола с пустым тестовым проектом upstream write запрещён.
+Live read подтвердил текущее состояние на момент проверки: в P06 проекта A уже есть одна регистрация, остальные три списка пусты. Принадлежность существующей регистрации нашему сервису не доказана. P05/P07 не принимают `id`, поэтому read не доказывает, что можно изменить/отключить только нашу строку. P05 особенно запрещён из-за существующей записи; P07 также не выполняется без контролируемого receiver и доказанной semantics мутации.
 
 Предложение для будущей реализации: хранить клиентские подписки локально; upstream регистрировать только наш receiver после проверки проекта и отсутствия конфликтующего состояния. Перед каждым write делать P06/P08, сопоставлять только созданную нами регистрацию по сохранённому upstream ID/marker и после write проверять полный список. Если адресная мутация не доказана, P05/P07 остаются заблокированными. Это предложение, не runtime-факт.
 
@@ -132,11 +141,11 @@
 4. Проверить allowlist расширения/MIME, безопасное имя, лимиты encoded/decoded size и Base64 до возврата через ProxyAPI.
 5. Не принимать от клиента внешний URL и не отдавать upstream headers/body при schema drift.
 
-`DOC`: форма ответа и Base64. `LIVE`: нет. Блокеры 0.5/G0: фактические MIME/размеры, error contract, возможность подмены `custom_id/file_id`, потребление памяти и наличие file ID в parent-read модели не подтверждены.
+`DOC`: форма ответа и Base64. `LIVE`: L10 не вызывался. Read-only discovery проверил пять лидов проекта A через L04 и нашёл суммарно пять полей `type=file`, но ни одно значение не содержало структурированный file ID, который можно было бы доказанно связать с path L10. Поэтому угадывать `file_id` или читать произвольный файл запрещено. Блокеры 0.5/G0: parent-read источник file ID, фактические MIME/размеры, error contract, защита от подмены `custom_id/file_id` и потребление памяти не подтверждены.
 
 ## 7. L21 и media endpoint записей
 
-Официальная [страница L21](https://docs.direct.lptracker.ru/lead/calls_list/) документирует список звонков за текущее и предыдущее полугодие. Элемент содержит `linkedid`, `time`, `duration`, `type`, `disposition`, nullable `record`, `owner_id` и nullable `owner`. Пример показывает, что `record` является URL поставщика, а `owner` может содержать PII. Фактический runtime host, redirects, response headers, MIME, Content-Length и Range не проверены.
+Официальная [страница L21](https://docs.direct.lptracker.ru/lead/calls_list/) документирует список звонков за текущее и предыдущее полугодие. Элемент содержит `linkedid`, `time`, `duration`, `type`, `disposition`, nullable `record`, `owner_id` и nullable `owner`. Пример показывает, что `record` является URL поставщика, а `owner` может содержать PII.
 
 Проверяемая цепочка:
 
@@ -148,7 +157,14 @@
 6. Наружу разрешены только сформированные нами `Content-Type`, `Content-Length`, `Content-Disposition`, `Accept-Ranges`/`Content-Range`, если их semantics доказаны. `Location`, cookies, server/debug headers и upstream URL не проксируются.
 7. Range не обещается до runtime-проверки. Если upstream Range отсутствует, допустимый вариант — ограниченно получить запись в контролируемое хранилище и обслуживать Range оттуда; это отдельное предложение с size/concurrency/retention limits.
 
-Те же правила применяются к `calls_records[].record` в callback лида. `DOC`: наличие record URL и связь `linkedid` между L21/callback. `LIVE`: нет. До проверки host/redirect/headers/Range media endpoint имеет только proposed contract и блокирует выпуск L21/callback media в G0.
+### LIVE 0.4
+
+- L05 вернул по пять последних лидов A/B; у всех десяти вложенный `contact.project_id` совпал с разрешённым проектом. Перед L21 три выбранных лида повторно проверены через L04; ID и вложенный project совпали.
+- L21 для двух лидов A вернул суммарно четыре элемента, для одного лида B — один. Все пять имели документированный набор ключей; `owner` был null, поэтому runtime-схема непустого owner не проверена.
+- Все пять непустых `record` использовали HTTPS и один документированный media host; иных host в этой выборке не было. URL и host value в журнал не сохранялись.
+- Для первой допустимой записи DNS дал один глобальный адрес. GET с `Range: bytes=0-0`, без redirect, вернул HTTP `206`, `Content-Type: application/octet-stream`, `Content-Length: 1`, `Content-Range: bytes 0-0/145644`; `Accept-Ranges`, `Content-Disposition` и `Location` отсутствовали. Прочитан один байт, тело не сохранялось.
+
+Высокая уверенность для этой выборки: Range фактически работает и redirect не понадобился. Средняя уверенность для общего контракта: это одна запись и одно окно проверки; отсутствие `Accept-Ranges`, MIME `application/octet-stream`, и непроверенные redirect/error/expiry/отзыв не позволяют обещать универсальное поведение. Те же правила безопасной выдачи применяются к `calls_records[].record` в callback лида.
 
 ## 8. Неподтверждённые гарантии и вопросы 0.5/G0
 
@@ -156,7 +172,7 @@
 2. Каков HTTP method/content type, timeout/ack contract, retry/backoff, порядок, максимальный размер, стабильный event ID и duplicate behavior — не установлено. Нельзя обещать подпись upstream, «ровно один раз», порядок или гарантированный срок доставки.
 3. Как безопасно подтвердить delete для lead/custom/funnel, если readback отсутствующего объекта неоднозначен.
 4. Можно ли P05/P07 адресно создать, изменить и отключить только нашу регистрацию, не затронув существующие; как `name`, `id` и empty `url` участвуют в выборе.
-5. Какие runtime hosts, redirects, headers, MIME, Range и size limits используются для call records.
+5. Стабильны ли наблюдённый media host и Range для других записей; каковы redirect/error/expiry semantics, реальные MIME и size limits. Одна успешная выборка не заменяет контракт поставщика.
 6. Какие реальные MIME/размеры/error responses и parent links действуют для L10.
 
 Если P05–P08, L10, L21 и callback delivery входят в принятый 0.5 scope, эти вопросы должны быть закрыты до G0 либо методы получают явно согласованный блокер/отличие. Документальная схема сама по себе не доказывает безопасную реализацию.
