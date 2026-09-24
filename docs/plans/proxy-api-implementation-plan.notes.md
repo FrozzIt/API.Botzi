@@ -52,6 +52,6 @@ PM принял задачу 0.3 по commit `a8826cadd8362526573b75287c8af6c9d9
 
 ### Задача 0.4 — события и медиа
 
-24.09.2026 выполнена документальная проверка P05–P08, двух callback-схем, L10 и L21. Результат: [events-media-findings.md](../api/events-media-findings.md). Live API calls: 0 — secure credential source и контролируемый receiver/fixtures в окружении отсутствовали. До чтения P06/P08 запрещено выполнять P05/P07; поэтому существующие подписки не изменялись. Звонки и уведомления не инициировались.
+24.09.2026 выполнена документальная проверка P05–P08, двух callback-схем, L10 и L21. Результат: [events-media-findings.md](../api/events-media-findings.md). Live API calls: 0. Локальный preflight разрешённого credential helper с `/usr/bin/true` завершился с exit code `1` и ошибкой `ERROR: LPTracker credential is unavailable`; credential не извлекался, environment не выводился. Контролируемый receiver/fixtures также отсутствовали. До чтения P06/P08 запрещено выполнять P05/P07; поэтому существующие подписки не изменялись. Звонки и уведомления не инициировались.
 
 Документация не подтверждает upstream callback authentication/delivery semantics, адресную мутацию конкретной подписки, delete verification и runtime media host/redirect/headers/Range. Эти пункты переданы как предметные блокеры 0.5/G0; 0.4 не объявляется принятой до PM review.
