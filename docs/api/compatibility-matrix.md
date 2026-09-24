@@ -90,6 +90,6 @@
 ## Итог по 64 строкам
 
 - 64 уникальных ID; 64 уникальных нормализованных пары method+path.
-- `LIVE`: 14; `DOC`: 18; `DOC+LIVE`: 29; `CONFLICT+LIVE`: 3; `UNAVAILABLE`: 0.
+- `LIVE`: 14; `DOC`: 15; `DOC+LIVE`: 32; `CONFLICT+LIVE`: 3; `UNAVAILABLE`: 0.
 - Три неразрешённых `CONFLICT+LIVE`: P10 (PUT против фактического GET в curl), C08 (`detail/details`; plural runtime error 400, singular runtime error 404 и detail retained), C11 (`details/field`). P02 подтверждён runtime на пути без trailing slash; slash-вариант не проверялся.
 - Значение `DOC+LIVE` не опровергает наличие операции: оно означает, что документация подтверждает route, но не позволяет безопасно зафиксировать весь request/response/runtime-контракт.
