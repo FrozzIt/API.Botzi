@@ -4,7 +4,7 @@
 
 **Статус:** `PROPOSED — AWAITING WRITTEN DECISION`
 
-**Дата пакета:** 2026-09-24
+**Дата пакета:** 2026-09-25
 
 **Принимающие стороны:** заказчик продукта, представитель самописной CRM, технический reviewer/архитектор
 
@@ -35,7 +35,7 @@
 | D04 | Contact detail bootstrap | A: trusted mapping с нейтральным отказом; B: полный bootstrap; C: убрать C06–C07 из v1 | A | заказчик + CRM + reviewer | ожидается |
 | D05 | P05/P07 и существующие подписки | A: доказать адресность до G0; B: принять local-only контракт без upstream delivery; C: deferred | A; B/C меняют продуктовый контракт или scope | заказчик + CRM + reviewer | ожидается |
 | D06 | Callback trust и delete | A: readback для create/update, delete quarantine; B: потребовать доказанную аутентификацию и delete reconciliation; C: deferred callback delivery | B, если CRM требует полный поток; иначе A как явное отличие | заказчик + CRM + reviewer | ожидается |
-| D07 | L10 и происхождение `file_id` | A: только trusted mapping; B: доказать parent source для всех файлов; C: deferred L10 | A, если CRM принимает отсутствие legacy/out-of-band файлов | заказчик + CRM + reviewer | ожидается |
+| D07 | L10 и происхождение `file_id` | A: до G0 доказать provider/parent source и цепочку `file_id → custom → lead → project`; B: deferred L10, scope 56/8 и отдельная оценка | A только при воспроизводимом доказательстве раздела 6; trusted mapping без доказанного источника `file_id` недостаточен, иначе B | заказчик + CRM + reviewer | ожидается |
 | D08 | L21/media | A: принять консервативный proxy contract и обязательные тесты; B: потребовать дополнительные fixtures до G0; C: deferred | A | заказчик + CRM + reviewer | ожидается |
 | D09 | Внешние `400/404/501` | A: принять предложение раздела 7; B: утвердить другую таблицу | A | CRM + заказчик + reviewer | ожидается |
 | D10 | G0/G7 и оценка | A: принять разделы 9–10; B: зафиксировать иные критерии/оценку | A после D01–D09 | заказчик + reviewer | ожидается |
@@ -66,6 +66,8 @@ Deferred означает: метод известен реестру, но не
 | T04 | Не доказаны staff rules, уведомления и transfer semantics | Выполнены условия T01; runtime проверяет старый/новый project и запрещает transfer до write | Post-write обнаружение чужого проекта или отсутствие уведомления в одном случае |
 | T05 | Нет безопасного task lifecycle с доказанным проектом | После допуска T01/T04 fixture читается перед delete; delete и readback подтверждены без чужих эффектов | Delete по одному task ID без precheck |
 
+Если принят D07-B, восьмым deferred становится `L10`. Его условие возврата: provider/parent read воспроизводимо выдаёт `file_id`; обезличенный fixture доказывает цепочку `file_id → custom → lead → разрешённый project`; отрицательный fixture подтверждает neutral denial для чужой или недоказанной цепочки; после этого согласованы Base64/MIME/size/error limits и выполнены contract/isolation tests. Client-supplied `file_id`, догадка либо mapping из недоказанного источника условие возврата не выполняют.
+
 ## 5. Обязательные ограничения методов, остающихся в v1
 
 Эти правила не являются временными удобствами. Без доказанной принадлежности операция не выполняется и данные не выдаются независимо от принятого scope.
@@ -77,7 +79,7 @@ Deferred означает: метод известен реестру, но не
 | L01/L06 | Неподтверждённые `owner/observers` отклоняются; молчаливое назначение запрещено | negative staff IDs; body не вызывает write до проверки всех ссылок |
 | T02–T03 | Доказать project задачи/списка; очистить nested staff/profile fields | foreign IDs, list leakage, main-account/zero-ID, avatar/internal URL redaction |
 | P05–P08 | Публично показывать только локальные настройки клиента; не раскрывать upstream receiver/чужие URL | existing subscriptions unchanged; exact ownership before any mutation |
-| L10 | `lead`, `custom` и `file` должны образовывать доказанную цепочку; client URL не принимается | trusted file ID source, wrong custom/file IDs, size/MIME/Base64 limits |
+| L10 | `lead`, `custom` и `file` должны образовывать доказанную цепочку; client URL и client-supplied `file_id` не являются источником принадлежности | До допуска реализации — воспроизводимый provider/parent source `file_id`; затем wrong custom/file IDs, project isolation, size/MIME/Base64 limits. Одного server-side mapping недостаточно, если неизвестно, откуда безопасно получен `file_id` |
 | L21/media | Не отдавать `record`; выдавать opaque URL нашего домена после повторной проверки прав | SSRF/DNS/redirect, expiry/revocation, Range, headers, size/concurrency |
 
 ## 6. Нерешённые вопросы 0.4 и последствия для G0
@@ -88,14 +90,14 @@ Deferred означает: метод известен реестру, но не
 |---|---|---|---|---|
 | P05/P07 | P06 A содержит одну существующую lead-подписку; остальные P06/P08 списки пусты; writes не выполнялись | PUT не принимает subscription ID; add/update/replace и empty-url target неизвестны | 1) provider confirmation + isolated controlled write/readback; 2) local-only settings без upstream delivery как принятое отличие; 3) defer P05/P07/callback registration | При варианте 1 G0 ждёт доказательство; вариант 2 требует согласия CRM и меняет promise событий; вариант 3 меняет 57/7 и оценку |
 | Callback trust | Payload обеих схем документирован; secret URL не является proof | Signature/headers/mTLS/allowlist, retry/order/event ID; надёжный delete payload/readback | 1) authenticate upstream; 2) untrusted signal + authorized readback для create/update, delete quarantine; 3) defer delivery | Без принятого варианта нельзя утверждать безопасный callback contract и проходить G0 |
-| L10 | DOC обещает Base64 response; пять verified file fields не дали structured file ID; L10 не вызывался | Parent source `file_id`, MIME/size/errors, legacy/out-of-band files | 1) trusted mapping от L09/proxy-created files; 2) provider/fixture доказывает полный parent source; 3) defer L10 | Вариант 1 — явное отличие и neutral denial для неизвестных файлов; 2 блокирует G0 до evidence; 3 меняет scope/estimate |
+| L10 | DOC обещает Base64 response; пять verified file fields не дали structured file ID; L10 не вызывался | Provider/parent source `file_id`, его связь с точными `custom_id`, `lead_id` и разрешённым `project_id`, MIME/size/errors, legacy/out-of-band files | 1) до G0 получить обезличенный воспроизводимый read-only fixture: provider/parent read возвращает `file_id`, а последующие parent reads доказывают цепочку `file_id → custom → lead → project`; negative fixture не позволяет использовать тот же ID вне разрешённой цепочки; 2) если такое доказательство недоступно, defer L10 и принять scope 56/8 с оценкой раздела 10 | Вариант 1 блокирует G0 до evidence; догадка, client-supplied ID или mapping, наполненный из недоказанного источника, не подходят. Вариант 2 меняет scope, OpenAPI, клиентскую документацию, G7 и оценку |
 | L21/media | Три owned leads; пять HTTPS records на documented host; один Range вернул 206/Content-Range без redirect | Непустой owner, другие host/records, redirect/error/expiry, реальные MIME, revoke/concurrency | 1) conservative allowlist/no-redirect contract + обязательные stage-5 tests; 2) дополнительные fixtures до G0; 3) defer | Вариант 1 позволяет признать feasibility, но не готовность; failure-path tests остаются gate G5/G7 |
 
 ### Рекомендованный пакет по 0.4
 
 - P05/P07: вариант 1; не выполнять upstream write до доказанной адресности.
 - Callback: вариант 2 только если CRM письменно принимает отсутствие неподтверждаемого delete; иначе вариант 1/3.
-- L10: вариант 1 с нейтральным отказом для файлов без trusted mapping; если CRM требует legacy files, вариант 2 блокирует G0.
+- L10: вариант 1 только после проверяемого доказательства происхождения `file_id` и всей parent/project-цепочки. До этого trusted mapping не делает L10 реализуемым. Если доказательство до G0 недоступно, принять вариант 2: deferred L10, scope 56/8 и отдельную оценку.
 - L21: вариант 1; единичный Range остаётся evidence feasibility, а не полного контракта.
 
 ## 7. Предложение внешнего error contract
@@ -152,8 +154,8 @@ X-Request-ID: <opaque-request-id>
 |---|---|
 | Реестр | Сохранить все 64 ID/источника; отметить 57 `v1`, 7 `deferred`, ссылку на это решение и условия возврата |
 | Compatibility matrix | Не менять DOC/LIVE-факты; scope status хранить отдельно от verification status |
-| OpenAPI | Содержать все 64 method+path для прозрачности: 57 с success/error schemas, 7 с `x-release-status: deferred` и только согласованным `501`; не генерировать upstream calls для deferred |
-| Клиентская документация | Таблица 57 доступных операций, отдельный список 7 deferred, ограничения C05/C06–C07/L01/L06/T02–T03 и 0.4, нейтральные errors, отсутствие обещания полной LPTracker compatibility |
+| `docs/api/openapi.yaml` | Создать фактический черновик со всеми 64 method+path для прозрачности: 57 с success/error schemas, 7 с `x-release-status: deferred` и только согласованным `501`; не генерировать upstream calls для deferred. Файл ещё не создан и не считается результатом этого decision-ready пакета |
+| `docs/api/client-contract.md` | Создать фактический черновик: таблица 57 доступных операций, отдельный список 7 deferred, ограничения C05/C06–C07/L01/L06/T02–T03 и 0.4, нейтральные errors, отсутствие обещания полной LPTracker compatibility. Файл ещё не создан |
 | 2.1 | Добавить neutral denial для detail без trusted mapping и обязательную redaction T02–T03 |
 | 2.2 | Заменить полный bootstrap на trusted mapping boundary, только если принят D04-A; pre-existing/out-of-band ID без mapping получает 404 без upstream read |
 | 2.3 | Убрать публичный S01; не использовать account-scoped staff как membership; оставить только доказуемые справочники и redaction |
@@ -174,9 +176,9 @@ X-Request-ID: <opaque-request-id>
 G0 не пройден этим документом. Для вынесения на G0 одновременно нужны:
 
 1. письменные D01–D10 с именем/ролью/датой;
-2. синхронные реестр, matrix scope block, OpenAPI policy, client-doc policy и будущие задачи;
+2. синхронные артефакты: `docs/plans/proxy-api-endpoint-inventory.md`, scope-блок `docs/api/compatibility-matrix.md`, фактический валидируемый черновик `docs/api/openapi.yaml`, фактический черновик `docs/api/client-contract.md`, обновлённые `docs/plans/proxy-api-tasks.md` и `docs/plans/proxy-api-implementation-plan.md`; два черновика сейчас отсутствуют, поэтому этот пункт ещё не выполнен;
 3. принятые safe rules C05, C06–C07, L01/L06, T02–T03;
-4. для P05/P07, callback, L10, L21 выбран вариант раздела 6 и зафиксировано, что блокирует G0, а что переносится в implementation gate;
+4. для P05/P07, callback и L21 выбран вариант раздела 6 и зафиксировано, что блокирует G0, а что переносится в implementation gate; для L10 до G0 либо приложено воспроизводимое доказательство `file_id → custom → lead → project`, либо письменно принят deferred L10 со scope 56/8, обновлёнными артефактами и оценкой раздела 10;
 5. для каждого deferred утверждены return condition и требование `501` без upstream call; runtime-проверка этого требования остаётся задачей 7.1;
 6. reviewer/архитектор отдельно ставит `G0 APPROVED`; принятие 0.5 не заменяет эту отметку.
 
@@ -209,13 +211,22 @@ G0 не пройден этим документом. Для вынесения 
 | 8 | 4–6 | 4–6 | Pilot/release без изменения |
 | **Итого** | **50–77** | **43–67** | Снижение на 7–10 человеко-дней |
 
-Ориентир: один backend-разработчик — примерно 9–14 рабочих недель; два — примерно 6–10 календарных недель при тех же предпосылках QA/DevOps/reviewer. Это предварительная оценка, не обязательство.
+Ориентир: один backend-разработчик — примерно 9–14 рабочих недель. Ориентир для двух — примерно 6–10 календарных недель — допустим только если reviewer отдельно разрешил параллельное выполнение конкретных задач и принял их зависимости согласно процессу плана. При последовательной приёмке срок для двух разработчиков как ориентир не приводится и должен быть пересчитан по разрешённому графику. Это предварительная оценка, не обязательство.
 
 ### Если приняты 57/7, но сохранён полный bootstrap D04-B
 
-Этап 2 остаётся `6–10`, итог — **44–69 человеко-дней**. Ориентир: один разработчик 9–14 рабочих недель; два — примерно 6–10 календарных недель.
+Этап 2 остаётся `6–10`, итог — **44–69 человеко-дней**. Ориентир для одного разработчика — 9–14 рабочих недель. Диапазон для двух — примерно 6–10 календарных недель — применим только к отдельно разрешённым параллельным задачам; при последовательной приёмке он не является ориентиром.
 
-Обе оценки:
+### Если L10 deferred: scope 56/8
+
+Если доказательство D07-A недоступно до G0, `L10` переносится в deferred: v1 содержит 56 операций, deferred-набор — `C08`, `S01`, `L10`, `L11`, `L22`, `T01`, `T04`, `T05`. Этап 5 предварительно меняется с `4–7` на `3–6` человеко-дней: остаются регистрация route, neutral `501` без upstream call и тест отсутствия утечки, но исключаются получение/Base64, доказательство ownership и limits/error tests L10.
+
+- при D04-A trusted mapping итог — **42–66 человеко-дней**;
+- при D04-B full bootstrap итог — **43–68 человеко-дней**.
+
+Уверенность этой дельты низкая до доказательства остальных блокеров 0.4. Для одного разработчика календарный диапазон остаётся ориентировочно 9–14 рабочих недель из-за округления и внешних ожиданий. Срок для двух разработчиков не приводится без отдельно разрешённого перечня параллельных задач.
+
+Все условные оценки:
 
 - не включают ожидание provider/PM/reviewer;
 - не включают возврат семи deferred в будущий release;
@@ -242,7 +253,7 @@ D03 retained safety rules: accepted / changes: ...
 D04 details: A / B / C
 D05 subscriptions: A / B / C
 D06 callbacks: A / B / C
-D07 L10: A / B / C
+D07 L10: A / B
 D08 L21/media: A / B / C
 D09 error contract: A / B, changes: ...
 D10 G0/G7/estimate: A / B, changes: ...
@@ -254,8 +265,8 @@ Name, role, date, link
 После письменного ответа в той же ветке выполняется отдельный commit:
 
 1. заменить `PROPOSED` на `ACCEPTED` или `REJECTED`, сохранить ссылки и даты;
-2. атомарно обновить inventory, matrix scope block, implementation plan, tasks, vision cross-reference, OpenAPI/client-doc policy и estimate;
-3. проверить 64 ID, `57 + 7 = 64`, отсутствие пересечений и неизменность verification facts;
+2. атомарно обновить inventory, matrix scope block, implementation plan, tasks, vision cross-reference и estimate; создать и согласовать фактические `docs/api/openapi.yaml` и `docs/api/client-contract.md`, не подменяя их описанием policy;
+3. проверить 64 ID, принятую сумму `57 + 7 = 64` либо `56 + 8 = 64`, отсутствие пересечений и неизменность verification facts;
 4. выполнить `git diff --check` и проверку ссылок;
 5. передать PM на повторную проверку;
 6. не начинать 1.1 и не ставить G0 до отдельного `G0 APPROVED`.
