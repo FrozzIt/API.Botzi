@@ -38,7 +38,9 @@ jobs:
           --health-retries 30
 
     env:
+      CLIENT_CONFIG_PATH: tests/fixtures/clients.compose.yaml
       DATABASE_URL: postgresql+asyncpg://proxyapi@127.0.0.1:5432/proxyapi
+      PROVIDER_ACCOUNTS: primary
       REDIS_URL: redis://127.0.0.1:6379/0
       RUN_INTEGRATION_TESTS: "1"
 
@@ -76,7 +78,7 @@ jobs:
         run: |
           docker compose up --build --wait
           test "$(curl --fail --silent http://127.0.0.1:8000/health)" = '{"status":"ok"}'
-          test "$(docker compose exec -T postgres psql -U proxyapi -d proxyapi -Atc 'select version_num from alembic_version')" = "20260928_0001"
+          test "$(docker compose exec -T postgres psql -U proxyapi -d proxyapi -Atc 'select version_num from alembic_version')" = "20260929_0002"
 
       - name: Stop Docker stack
         if: always()
