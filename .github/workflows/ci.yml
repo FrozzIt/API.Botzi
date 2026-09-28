@@ -71,3 +71,13 @@ jobs:
 
       - name: Validate Docker Compose
         run: docker compose config --quiet
+
+      - name: Smoke test clean Docker stack
+        run: |
+          docker compose up --build --wait
+          test "$(curl --fail --silent http://127.0.0.1:8000/health)" = '{"status":"ok"}'
+          test "$(docker compose exec -T postgres psql -U proxyapi -d proxyapi -Atc 'select version_num from alembic_version')" = "20260928_0001"
+
+      - name: Stop Docker stack
+        if: always()
+        run: docker compose down --volumes --remove-orphans
