@@ -2,14 +2,21 @@ from __future__ import annotations
 
 import asyncio
 import os
+import socket
+import subprocess
+import sys
+import time
 from pathlib import Path
 
+import httpx
 import pytest
 import yaml
 from fastapi.testclient import TestClient
+from redis.asyncio import Redis
 from sqlalchemy import delete, select
 from sqlalchemy.ext.asyncio import AsyncEngine, async_sessionmaker, create_async_engine
 
+from proxy_api.auth.rate_limit import LoginAttemptLimiter, LoginAttemptRejected
 from proxy_api.auth.service import AuthenticationFailed, AuthService, hash_password, hash_token
 from proxy_api.configuration.loader import ClientConfigError, load_client_config
 from proxy_api.configuration.service import ConfigRevisionError, ConfigService
@@ -29,6 +36,68 @@ def database_url() -> str:
     if value is None:
         raise RuntimeError("DATABASE_URL is required for integration tests")
     return value
+
+
+def redis_url() -> str:
+    value = os.getenv("REDIS_URL")
+    if value is None:
+        raise RuntimeError("REDIS_URL is required for integration tests")
+    return value
+
+
+def unused_local_port() -> int:
+    with socket.socket() as server_socket:
+        server_socket.bind(("127.0.0.1", 0))
+        return int(server_socket.getsockname()[1])
+
+
+def start_app_process(config_path: Path, port: int) -> subprocess.Popen[str]:
+    environment = os.environ.copy()
+    environment["CLIENT_CONFIG_PATH"] = str(config_path)
+    return subprocess.Popen(
+        [
+            sys.executable,
+            "-m",
+            "uvicorn",
+            "proxy_api.main:app",
+            "--host",
+            "127.0.0.1",
+            "--port",
+            str(port),
+            "--log-level",
+            "warning",
+            "--no-access-log",
+        ],
+        env=environment,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+    )
+
+
+def wait_for_app(process: subprocess.Popen[str], port: int) -> None:
+    deadline = time.monotonic() + 10
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            raise AssertionError("Application process stopped before becoming ready")
+        try:
+            if httpx.get(f"http://127.0.0.1:{port}/health", timeout=0.5).status_code == 200:
+                return
+        except httpx.TransportError:
+            pass
+        time.sleep(0.05)
+    raise AssertionError("Application process did not become ready")
+
+
+def stop_app_process(process: subprocess.Popen[str]) -> None:
+    if process.poll() is not None:
+        return
+    process.terminate()
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        process.kill()
+        process.wait(timeout=5)
 
 
 async def reset_auth_database(engine: AsyncEngine) -> None:
@@ -111,8 +180,16 @@ async def test_config_apply_and_sessions_are_shared_between_processes(tmp_path: 
         assert apply_one.changed is True
         assert apply_one_from_second_process.changed is False
 
-        auth_one = AuthService(sessions_one, idle_timeout_seconds=86_400)
-        auth_two = AuthService(sessions_two, idle_timeout_seconds=86_400)
+        auth_one = AuthService(
+            sessions_one,
+            idle_timeout_seconds=86_400,
+            expected_config_revision=1,
+        )
+        auth_two = AuthService(
+            sessions_two,
+            idle_timeout_seconds=86_400,
+            expected_config_revision=1,
+        )
         token_a_v1 = await auth_one.login(
             login="client_a",
             password=password_a_v1,
@@ -198,9 +275,23 @@ async def test_config_apply_and_sessions_are_shared_between_processes(tmp_path: 
         assert apply_two.revoked_client_keys == frozenset({"client_a"})
         with pytest.raises(AuthenticationFailed):
             await auth_one.authenticate(token_a_v1)
-        assert (await auth_one.authenticate(token_b)).client_key == "client_b"
+        with pytest.raises(AuthenticationFailed):
+            await auth_one.authenticate(token_b)
+        with pytest.raises(AuthenticationFailed):
+            await auth_one.login(
+                login="client_b",
+                password=password_b,
+                service="synthetic-service-b",
+                version="2",
+            )
 
-        token_a_v2 = await auth_one.login(
+        auth_revision_two = AuthService(
+            sessions_two,
+            idle_timeout_seconds=86_400,
+            expected_config_revision=2,
+        )
+        assert (await auth_revision_two.authenticate(token_b)).client_key == "client_b"
+        token_a_v2 = await auth_revision_two.login(
             login="client_a",
             password=password_a_v2,
             service="synthetic-service-a",
@@ -222,11 +313,11 @@ async def test_config_apply_and_sessions_are_shared_between_processes(tmp_path: 
         apply_three = await ConfigService(sessions_one).apply(revision_three)
         assert apply_three.revoked_client_keys == frozenset({"client_a", "client_b"})
         with pytest.raises(AuthenticationFailed):
-            await auth_two.authenticate(token_a_v2)
+            await auth_revision_two.authenticate(token_a_v2)
         with pytest.raises(AuthenticationFailed):
-            await auth_two.authenticate(token_b)
+            await auth_revision_two.authenticate(token_b)
         with pytest.raises(AuthenticationFailed):
-            await auth_two.login(
+            await auth_revision_two.login(
                 login="client_b",
                 password=password_b,
                 service="synthetic-service-b",
@@ -242,6 +333,206 @@ async def test_config_apply_and_sessions_are_shared_between_processes(tmp_path: 
     finally:
         await engine_one.dispose()
         await engine_two.dispose()
+
+
+def test_two_app_instances_fail_closed_across_config_revisions(tmp_path: Path) -> None:
+    require_integration_services()
+
+    async def reset_database_and_limiter() -> None:
+        engine = create_async_engine(database_url())
+        redis_client = Redis.from_url(redis_url(), decode_responses=True)
+        try:
+            await reset_auth_database(engine)
+            await redis_client.delete(
+                LoginAttemptLimiter.source_key("127.0.0.1"),
+                LoginAttemptLimiter.identity_key("synthetic_b"),
+            )
+        finally:
+            await engine.dispose()
+            await redis_client.aclose()
+
+    asyncio.run(reset_database_and_limiter())
+    config_one = yaml.safe_load(Path("tests/fixtures/clients.compose.yaml").read_text())
+    config_two = yaml.safe_load(Path("tests/fixtures/clients.compose.yaml").read_text())
+    config_two["revision"] = 2
+    config_two["clients"]["synthetic_a"]["main_owner_display_name"] = "Revision 2 owner"
+    revision_one_path = write_document(tmp_path / "app-revision-1.yaml", config_one)
+    revision_two_path = write_document(tmp_path / "app-revision-2.yaml", config_two)
+
+    port_one = unused_local_port()
+    port_two = unused_local_port()
+    while port_two == port_one:
+        port_two = unused_local_port()
+    process_one = start_app_process(revision_one_path, port_one)
+    process_two: subprocess.Popen[str] | None = None
+    try:
+        wait_for_app(process_one, port_one)
+        token = httpx.post(
+            f"http://127.0.0.1:{port_one}/login",
+            json={
+                "login": "synthetic_b",
+                "password": "synthetic-client-b-password",
+                "service": "synthetic-service",
+                "version": "1",
+            },
+        ).json()["result"]["token"]
+
+        process_two = start_app_process(revision_two_path, port_two)
+        wait_for_app(process_two, port_two)
+        neutral_error = {
+            "status": "error",
+            "errors": [{"code": 401, "message": "Authentication failed"}],
+        }
+        assert httpx.get(f"http://127.0.0.1:{port_one}/health").status_code == 503
+        assert (
+            httpx.post(
+                f"http://127.0.0.1:{port_one}/login",
+                json={
+                    "login": "synthetic_b",
+                    "password": "synthetic-client-b-password",
+                    "service": "synthetic-service",
+                    "version": "2",
+                },
+            ).json()
+            == neutral_error
+        )
+        assert (
+            httpx.post(
+                f"http://127.0.0.1:{port_one}/logout",
+                headers={"token": token},
+            ).json()
+            == neutral_error
+        )
+
+        assert httpx.get(f"http://127.0.0.1:{port_two}/health").json() == {"status": "ok"}
+        assert httpx.post(
+            f"http://127.0.0.1:{port_two}/logout",
+            headers={"token": token},
+        ).json() == {"status": "success", "result": {}}
+        assert (
+            "token"
+            in httpx.post(
+                f"http://127.0.0.1:{port_two}/login",
+                json={
+                    "login": "synthetic_b",
+                    "password": "synthetic-client-b-password",
+                    "service": "synthetic-service",
+                    "version": "2",
+                },
+            ).json()["result"]
+        )
+
+        stop_app_process(process_one)
+        process_one = start_app_process(revision_two_path, port_one)
+        wait_for_app(process_one, port_one)
+
+        async def clear_rate_limit_keys(*logins: str) -> None:
+            redis_client = Redis.from_url(redis_url(), decode_responses=True)
+            try:
+                await redis_client.delete(
+                    LoginAttemptLimiter.source_key("127.0.0.1"),
+                    *(LoginAttemptLimiter.identity_key(login) for login in logins),
+                )
+            finally:
+                await redis_client.aclose()
+
+        asyncio.run(clear_rate_limit_keys("synthetic_a", "unknown"))
+        for index in range(5):
+            port = port_one if index % 2 == 0 else port_two
+            assert (
+                httpx.post(
+                    f"http://127.0.0.1:{port}/login",
+                    json={
+                        "login": "synthetic_a",
+                        "password": "wrong-synthetic-password",
+                        "service": "synthetic-service",
+                        "version": "2",
+                    },
+                ).json()
+                == neutral_error
+            )
+        assert (
+            httpx.post(
+                f"http://127.0.0.1:{port_two}/login",
+                json={
+                    "login": "synthetic_a",
+                    "password": "synthetic-client-a-password",
+                    "service": "synthetic-service",
+                    "version": "2",
+                },
+            ).json()
+            == neutral_error
+        )
+
+        asyncio.run(clear_rate_limit_keys("synthetic_a", "unknown"))
+        for index in range(5):
+            port = port_one if index % 2 == 0 else port_two
+            assert (
+                httpx.post(
+                    f"http://127.0.0.1:{port}/login",
+                    json={
+                        "login": "unknown",
+                        "password": "wrong-synthetic-password",
+                        "service": "synthetic-service",
+                        "version": "2",
+                    },
+                ).json()
+                == neutral_error
+            )
+        assert (
+            httpx.post(
+                f"http://127.0.0.1:{port_one}/login",
+                json={
+                    "login": "synthetic_a",
+                    "password": "synthetic-client-a-password",
+                    "service": "synthetic-service",
+                    "version": "2",
+                },
+            ).json()
+            == neutral_error
+        )
+    finally:
+        if process_two is not None:
+            stop_app_process(process_two)
+        stop_app_process(process_one)
+
+
+@pytest.mark.asyncio
+async def test_login_limiter_is_atomic_shared_and_contains_no_credentials() -> None:
+    require_integration_services()
+    source = "synthetic-source-rate-limit"
+    login = "synthetic-login-rate-limit"
+    password_marker = "synthetic-password-must-not-reach-redis"
+    token_marker = "synthetic-token-must-not-reach-redis"
+    clients = [Redis.from_url(redis_url(), decode_responses=True) for _ in range(2)]
+    limiters = [
+        LoginAttemptLimiter(client, attempt_limit=5, window_seconds=60) for client in clients
+    ]
+    source_key = LoginAttemptLimiter.source_key(source)
+    identity_key = LoginAttemptLimiter.identity_key(login)
+    await clients[0].delete(source_key, identity_key)
+
+    try:
+        results = await asyncio.gather(
+            *(limiters[index % 2].check(source=source, login=login) for index in range(12)),
+            return_exceptions=True,
+        )
+        assert sum(result is None for result in results) == 5
+        assert sum(isinstance(result, LoginAttemptRejected) for result in results) == 7
+
+        stored = " ".join(
+            [
+                source_key,
+                identity_key,
+                *(await clients[0].zrange(source_key, 0, -1)),
+                *(await clients[0].zrange(identity_key, 0, -1)),
+            ]
+        )
+        for secret in (source, login, password_marker, token_marker):
+            assert secret not in stored
+    finally:
+        await clients[0].delete(source_key, identity_key)
+        await asyncio.gather(*(client.aclose() for client in clients))
 
 
 def test_login_logout_routes_are_neutral_and_isolated() -> None:

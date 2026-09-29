@@ -1,7 +1,7 @@
 from functools import lru_cache
 from pathlib import Path
 
-from pydantic import ConfigDict
+from pydantic import ConfigDict, Field
 from pydantic_settings import BaseSettings
 
 
@@ -12,6 +12,8 @@ class Settings(BaseSettings):
     database_url: str
     provider_accounts: str
     redis_url: str
+    login_attempt_limit: int = Field(default=5, gt=0)
+    login_attempt_window_seconds: int = Field(default=60, gt=0)
     session_idle_timeout_seconds: int = 86_400
 
     @property

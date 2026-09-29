@@ -161,3 +161,8 @@ class ConfigService:
             changed=True,
             revoked_client_keys=frozenset(revoked_client_keys),
         )
+
+    async def is_current_revision(self, revision: int) -> bool:
+        async with self._session_factory() as session:
+            state = await session.get(ConfigState, 1)
+            return state is not None and state.revision == revision

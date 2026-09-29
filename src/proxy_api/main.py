@@ -16,14 +16,24 @@ from proxy_api.infrastructure import (
 )
 
 
+async def config_revision_is_current(request: Request) -> bool:
+    try:
+        return await ConfigService(get_session_factory()).is_current_revision(
+            getattr(request.app.state, "config_revision", -1)
+        )
+    except Exception:
+        return False
+
+
 @asynccontextmanager
-async def lifespan(_: FastAPI) -> AsyncIterator[None]:
+async def lifespan(application: FastAPI) -> AsyncIterator[None]:
     try:
         settings = get_settings()
-        await ConfigService(get_session_factory()).apply_file(
+        result = await ConfigService(get_session_factory()).apply_file(
             settings.client_config_path,
             settings.allowed_provider_accounts,
         )
+        application.state.config_revision = result.revision
         yield
     finally:
         await close_infrastructure()
@@ -55,8 +65,9 @@ def create_app() -> FastAPI:
     async def healthcheck(
         database_ready: bool = Depends(database_is_ready),
         redis_ready: bool = Depends(redis_is_ready),
+        config_ready: bool = Depends(config_revision_is_current),
     ) -> JSONResponse:
-        if database_ready and redis_ready:
+        if database_ready and redis_ready and config_ready:
             return JSONResponse({"status": "ok"})
         return JSONResponse(
             {"status": "unavailable"},

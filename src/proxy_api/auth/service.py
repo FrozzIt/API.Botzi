@@ -10,7 +10,7 @@ from argon2.exceptions import InvalidHashError, VerificationError, VerifyMismatc
 from sqlalchemy import select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
-from proxy_api.database import AuthClient, AuthSession
+from proxy_api.database import AuthClient, AuthSession, ConfigState
 
 PASSWORD_HASHER = PasswordHasher(
     time_cost=3,
@@ -47,9 +47,11 @@ class AuthService:
         self,
         session_factory: async_sessionmaker[AsyncSession],
         idle_timeout_seconds: int,
+        expected_config_revision: int,
     ) -> None:
         self._session_factory = session_factory
         self._idle_timeout = timedelta(seconds=idle_timeout_seconds)
+        self._expected_config_revision = expected_config_revision
 
     async def login(
         self,
@@ -61,6 +63,7 @@ class AuthService:
     ) -> str:
         normalized_login = login.casefold()
         async with self._session_factory() as session, session.begin():
+            await self._lock_current_config_revision(session)
             client = await session.scalar(
                 select(AuthClient)
                 .where(AuthClient.login_normalized == normalized_login)
@@ -86,6 +89,7 @@ class AuthService:
         now = datetime.now(UTC)
         token_digest = hash_token(token)
         async with self._session_factory() as session, session.begin():
+            await self._lock_current_config_revision(session)
             row = (
                 await session.execute(
                     select(AuthSession, AuthClient)
@@ -114,6 +118,7 @@ class AuthService:
         now = datetime.now(UTC)
         token_digest = hash_token(token)
         async with self._session_factory() as session, session.begin():
+            await self._lock_current_config_revision(session)
             row = (
                 await session.execute(
                     select(AuthSession, AuthClient)
@@ -131,6 +136,13 @@ class AuthService:
                     auth_session.revoked_at = now
                 raise AuthenticationFailed("Authentication failed")
             auth_session.revoked_at = now
+
+    async def _lock_current_config_revision(self, session: AsyncSession) -> None:
+        state = await session.scalar(
+            select(ConfigState).where(ConfigState.id == 1).with_for_update(read=True)
+        )
+        if state is None or state.revision != self._expected_config_revision:
+            raise AuthenticationFailed("Authentication failed")
 
     @staticmethod
     def _verify_password(password_hash: str, password: str) -> bool:

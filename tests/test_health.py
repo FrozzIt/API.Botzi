@@ -6,7 +6,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from proxy_api.infrastructure import database_is_ready, redis_is_ready
-from proxy_api.main import create_app
+from proxy_api.main import config_revision_is_current, create_app
 
 
 @asynccontextmanager
@@ -28,8 +28,12 @@ def set_readiness(app: FastAPI, *, database: bool, redis: bool) -> None:
     async def redis_check() -> bool:
         return redis
 
+    async def config_check() -> bool:
+        return True
+
     app.dependency_overrides[database_is_ready] = database_check
     app.dependency_overrides[redis_is_ready] = redis_check
+    app.dependency_overrides[config_revision_is_current] = config_check
 
 
 def test_healthcheck_is_neutral_when_dependencies_are_ready(app: FastAPI) -> None:
