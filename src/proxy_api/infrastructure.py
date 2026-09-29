@@ -2,11 +2,17 @@ from __future__ import annotations
 
 from redis.asyncio import Redis
 from sqlalchemy import text
-from sqlalchemy.ext.asyncio import AsyncEngine, create_async_engine
+from sqlalchemy.ext.asyncio import (
+    AsyncEngine,
+    AsyncSession,
+    async_sessionmaker,
+    create_async_engine,
+)
 
 from proxy_api.config import get_settings
 
 _database_engine: AsyncEngine | None = None
+_session_factory: async_sessionmaker[AsyncSession] | None = None
 _redis_client: Redis | None = None
 
 
@@ -30,6 +36,16 @@ def get_redis_client() -> Redis:
     return _redis_client
 
 
+def get_session_factory() -> async_sessionmaker[AsyncSession]:
+    global _session_factory
+    if _session_factory is None:
+        _session_factory = async_sessionmaker(
+            get_database_engine(),
+            expire_on_commit=False,
+        )
+    return _session_factory
+
+
 async def database_is_ready() -> bool:
     try:
         async with get_database_engine().connect() as connection:
@@ -47,10 +63,11 @@ async def redis_is_ready() -> bool:
 
 
 async def close_infrastructure() -> None:
-    global _database_engine, _redis_client
+    global _database_engine, _redis_client, _session_factory
     if _database_engine is not None:
         await _database_engine.dispose()
         _database_engine = None
+        _session_factory = None
     if _redis_client is not None:
         await _redis_client.aclose()
         _redis_client = None

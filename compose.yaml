@@ -1,3 +1,5 @@
+# Development/test only. PostgreSQL trust and unauthenticated Redis require
+# hardening before production or any externally reachable CRM test.
 name: proxyapi
 
 services:
@@ -23,12 +25,17 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
   migrate:
     build: .
     command: ["alembic", "upgrade", "head"]
     environment: &backend-environment
+      CLIENT_CONFIG_PATH: /run/proxyapi/clients.yaml
       DATABASE_URL: postgresql+asyncpg://proxyapi@postgres:5432/proxyapi
+      PROVIDER_ACCOUNTS: primary
       REDIS_URL: redis://redis:6379/0
+    volumes:
+      - ./tests/fixtures/clients.compose.yaml:/run/proxyapi/clients.yaml:ro
     depends_on:
       postgres:
         condition: service_healthy
@@ -39,6 +46,8 @@ services:
   api:
     build: .
     environment: *backend-environment
+    volumes:
+      - ./tests/fixtures/clients.compose.yaml:/run/proxyapi/clients.yaml:ro
     depends_on:
       migrate:
         condition: service_completed_successfully

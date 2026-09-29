@@ -1,0 +1,31 @@
+# Synthetic development/test identities only. No provider credentials are stored here.
+schema_version: 1
+revision: 1
+
+clients:
+  synthetic_a:
+    enabled: true
+    login: synthetic_a
+    password_hash: $argon2id$v=19$m=65536,t=3,p=4$tTmUnlaKhiPS0brIMzMb7w$VC5f0Rys5eemOFxeaWGvWqmSVUsJHiMEL66bz86AnnI
+    provider_account: primary
+    project_id: 10001
+    allowed_staff_ids: []
+    main_owner_display_name: Synthetic owner A
+
+  synthetic_b:
+    enabled: true
+    login: synthetic_b
+    password_hash: $argon2id$v=19$m=65536,t=3,p=4$srzDH4PDJSXycGA+ejT/wQ$aplckS/msbdaBJAIrEvMALU22Ao2B641SLDuZZn88fs
+    provider_account: primary
+    project_id: 10002
+    allowed_staff_ids: []
+    main_owner_display_name: Synthetic owner B
+
+  synthetic_disabled:
+    enabled: false
+    login: synthetic_disabled
+    password_hash: $argon2id$v=19$m=65536,t=3,p=4$tTmUnlaKhiPS0brIMzMb7w$VC5f0Rys5eemOFxeaWGvWqmSVUsJHiMEL66bz86AnnI
+    provider_account: primary
+    project_id: 10003
+    allowed_staff_ids: []
+    main_owner_display_name: Synthetic disabled owner

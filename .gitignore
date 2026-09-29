@@ -1,4 +1,13 @@
-.env
+.env*
+secrets/
+*.local.yaml
+*.secret
+*.secret.*
+*.key
+*.p12
+*.pem
+*.pfx
+config/clients.yaml
 .pytest_cache/
 .ruff_cache/
 .venv/
