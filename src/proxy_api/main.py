@@ -14,6 +14,7 @@ from proxy_api.infrastructure import (
     get_session_factory,
     redis_is_ready,
 )
+from proxy_api.projects.routes import router as projects_router
 
 
 async def config_revision_is_current(request: Request) -> bool:
@@ -48,6 +49,7 @@ def create_app() -> FastAPI:
         lifespan=lifespan,
     )
     application.include_router(auth_router)
+    application.include_router(projects_router)
 
     @application.exception_handler(RequestValidationError)
     async def request_validation_error(
