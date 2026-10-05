@@ -79,7 +79,13 @@ async def read_allowed_project(
     received_project_id = result.get("id")
     if type(received_project_id) is not int or received_project_id != project_id:
         raise ProviderProtocolError("Provider response is invalid")
-    return result
+    public_project: dict[str, object] = {"id": received_project_id}
+    for field in ("name", "page", "domain"):
+        value = result.get(field)
+        if not isinstance(value, str):
+            raise ProviderProtocolError("Provider response is invalid")
+        public_project[field] = value
+    return public_project
 
 
 @router.get("/projects", include_in_schema=False)

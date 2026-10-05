@@ -31,7 +31,12 @@ class RecordingProvider:
         project_id = int(path.rsplit("/", 1)[1])
         return {
             "status": "success",
-            "result": {"id": project_id, "name": f"Project {project_id}"},
+            "result": {
+                "id": project_id,
+                "name": f"Project {project_id}",
+                "page": f"project-{project_id}",
+                "domain": f"project-{project_id}.example",
+            },
         }
 
 
@@ -86,10 +91,20 @@ def test_login_own_project_and_logout_are_isolated() -> None:
             ).json()["result"]["token"]
 
             assert client.get("/projects", headers={"token": token_a}).json()["result"] == [
-                {"id": 10001, "name": "Project 10001"}
+                {
+                    "id": 10001,
+                    "name": "Project 10001",
+                    "page": "project-10001",
+                    "domain": "project-10001.example",
+                }
             ]
             assert client.get("/projects", headers={"token": token_b}).json()["result"] == [
-                {"id": 10002, "name": "Project 10002"}
+                {
+                    "id": 10002,
+                    "name": "Project 10002",
+                    "page": "project-10002",
+                    "domain": "project-10002.example",
+                }
             ]
 
             calls_before_rejections = list(provider.calls)
@@ -114,6 +129,8 @@ def test_login_own_project_and_logout_are_isolated() -> None:
             assert client.get("/project/10002", headers={"token": token_b}).json()["result"] == {
                 "id": 10002,
                 "name": "Project 10002",
+                "page": "project-10002",
+                "domain": "project-10002.example",
             }
     finally:
         asyncio.run(reset_database())

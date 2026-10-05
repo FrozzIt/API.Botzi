@@ -39,8 +39,18 @@ class FakeProvider:
     def __init__(self) -> None:
         self.calls: list[str] = []
         self.responses: dict[int, dict[str, object]] = {
-            10001: {"id": 10001, "name": "Project A"},
-            10002: {"id": 10002, "name": "Project B"},
+            10001: {
+                "id": 10001,
+                "name": "Project A",
+                "page": "project-a",
+                "domain": "project-a.example",
+            },
+            10002: {
+                "id": 10002,
+                "name": "Project B",
+                "page": "project-b",
+                "domain": "project-b.example",
+            },
         }
         self.error: Exception | None = None
 
@@ -74,19 +84,43 @@ def test_two_clients_each_receive_only_their_configured_project() -> None:
 
     assert list_a.json() == {
         "status": "success",
-        "result": [{"id": 10001, "name": "Project A"}],
+        "result": [
+            {
+                "id": 10001,
+                "name": "Project A",
+                "page": "project-a",
+                "domain": "project-a.example",
+            }
+        ],
     }
     assert item_a.json() == {
         "status": "success",
-        "result": {"id": 10001, "name": "Project A"},
+        "result": {
+            "id": 10001,
+            "name": "Project A",
+            "page": "project-a",
+            "domain": "project-a.example",
+        },
     }
     assert list_b.json() == {
         "status": "success",
-        "result": [{"id": 10002, "name": "Project B"}],
+        "result": [
+            {
+                "id": 10002,
+                "name": "Project B",
+                "page": "project-b",
+                "domain": "project-b.example",
+            }
+        ],
     }
     assert item_b.json() == {
         "status": "success",
-        "result": {"id": 10002, "name": "Project B"},
+        "result": {
+            "id": 10002,
+            "name": "Project B",
+            "page": "project-b",
+            "domain": "project-b.example",
+        },
     }
     assert provider.calls == [
         "/project/10001",
@@ -187,7 +221,14 @@ def test_logout_of_one_client_does_not_affect_the_other() -> None:
     }
     assert unaffected.json() == {
         "status": "success",
-        "result": [{"id": 10002, "name": "Project B"}],
+        "result": [
+            {
+                "id": 10002,
+                "name": "Project B",
+                "page": "project-b",
+                "domain": "project-b.example",
+            }
+        ],
     }
     assert provider.calls == ["/project/10002"]
 
@@ -211,12 +252,52 @@ def test_provider_error_is_neutral() -> None:
     assert "other-project" not in response.text
 
 
+def test_unexpected_provider_fields_are_not_returned() -> None:
+    client, _, provider = make_client()
+    provider.responses[10001]["internal_secret"] = "must-not-leak"
+    provider.responses[10001]["foreign_project_marker"] = 10002
+
+    with client:
+        response = client.get("/project/10001", headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "success",
+        "result": {
+            "id": 10001,
+            "name": "Project A",
+            "page": "project-a",
+            "domain": "project-a.example",
+        },
+    }
+    assert "internal_secret" not in response.text
+    assert "foreign_project_marker" not in response.text
+    assert "must-not-leak" not in response.text
+
+
 @pytest.mark.parametrize(
     "unexpected_result",
     [
         {"id": 10002, "name": "Foreign project"},
         {"id": "10001", "name": "String ID"},
         {"name": "Missing ID"},
+        {
+            "id": 10001,
+            "name": 10001,
+            "page": "project-a",
+            "domain": "project-a.example",
+        },
+        {
+            "id": 10001,
+            "name": "Project A",
+            "page": None,
+            "domain": "project-a.example",
+        },
+        {
+            "id": 10001,
+            "name": "Project A",
+            "page": "project-a",
+            "domain": ["project-a.example"],
+        },
     ],
 )
 def test_unexpected_provider_project_is_not_returned(
