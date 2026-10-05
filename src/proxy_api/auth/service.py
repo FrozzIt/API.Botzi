@@ -30,6 +30,8 @@ class AuthenticationFailed(ValueError):
 class AuthenticatedSession:
     session_id: str
     client_key: str
+    provider_account: str
+    project_id: int
 
 
 def hash_token(token: str) -> bytes:
@@ -112,6 +114,8 @@ class AuthService:
             return AuthenticatedSession(
                 session_id=str(auth_session.id),
                 client_key=client.client_key,
+                provider_account=client.provider_account,
+                project_id=client.project_id,
             )
 
     async def logout(self, token: str) -> None:

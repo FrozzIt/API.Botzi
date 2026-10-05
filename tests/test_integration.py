@@ -7,7 +7,6 @@ from sqlalchemy import delete, inspect
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from proxy_api.database import AuthClient, AuthSession, ConfigState
-from proxy_api.infrastructure import get_database_engine
 from proxy_api.main import create_app
 
 pytestmark = pytest.mark.integration
@@ -45,10 +44,14 @@ def test_healthcheck_with_postgresql_and_redis() -> None:
 async def test_initial_migration_is_applied() -> None:
     require_integration_services()
 
-    async with get_database_engine().connect() as connection:
-        table_names = await connection.run_sync(
-            lambda sync_connection: inspect(sync_connection).get_table_names()
-        )
+    engine = create_async_engine(os.environ["DATABASE_URL"])
+    try:
+        async with engine.connect() as connection:
+            table_names = await connection.run_sync(
+                lambda sync_connection: inspect(sync_connection).get_table_names()
+            )
+    finally:
+        await engine.dispose()
 
     assert "alembic_version" in table_names
     assert "auth_clients" in table_names
