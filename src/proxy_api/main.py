@@ -5,6 +5,7 @@ from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from proxy_api.auth.routes import authentication_error
 from proxy_api.auth.routes import router as auth_router
 from proxy_api.config import get_settings
 from proxy_api.configuration.service import ConfigService
@@ -14,7 +15,12 @@ from proxy_api.infrastructure import (
     get_session_factory,
     redis_is_ready,
 )
-from proxy_api.projects.routes import router as projects_router
+from proxy_api.projects.routes import (
+    ClientAuthenticationError,
+)
+from proxy_api.projects.routes import (
+    router as projects_router,
+)
 
 
 async def config_revision_is_current(request: Request) -> bool:
@@ -50,6 +56,13 @@ def create_app() -> FastAPI:
     )
     application.include_router(auth_router)
     application.include_router(projects_router)
+
+    @application.exception_handler(ClientAuthenticationError)
+    async def client_authentication_error(
+        _: Request,
+        __: ClientAuthenticationError,
+    ) -> JSONResponse:
+        return authentication_error()
 
     @application.exception_handler(RequestValidationError)
     async def request_validation_error(

@@ -142,6 +142,34 @@ def test_invalid_token_is_rejected_before_provider_call() -> None:
     assert provider.calls == []
 
 
+@pytest.mark.parametrize("headers", [{}, {"token": "invalid-token"}])
+def test_auth_rejection_stops_before_provider_initialization(
+    headers: dict[str, str],
+) -> None:
+    application = create_app()
+    application.router.lifespan_context = no_op_lifespan
+    auth = FakeAuthService()
+    provider_initializations = 0
+
+    def unavailable_provider() -> FakeProvider:
+        nonlocal provider_initializations
+        provider_initializations += 1
+        raise RuntimeError("synthetic provider initialization failure")
+
+    application.dependency_overrides[get_auth_service] = lambda: auth
+    application.dependency_overrides[get_provider_adapter] = unavailable_provider
+    application.dependency_overrides[get_configured_provider_account] = lambda: "primary"
+
+    with TestClient(application) as client:
+        response = client.get("/projects", headers=headers)
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 401, "message": "Authentication failed"}],
+    }
+    assert provider_initializations == 0
+
+
 def test_logout_of_one_client_does_not_affect_the_other() -> None:
     client, _, provider = make_client()
 

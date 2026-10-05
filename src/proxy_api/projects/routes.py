@@ -3,7 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header
 from fastapi.responses import JSONResponse
 
-from proxy_api.auth.routes import AuthServiceDependency, authentication_error
+from proxy_api.auth.routes import AuthServiceDependency
 from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed
 from proxy_api.config import get_settings
 from proxy_api.infrastructure import get_provider_adapter
@@ -12,6 +12,10 @@ from proxy_api.provider import LPTrackerAdapter, ProviderError, ProviderProtocol
 router = APIRouter()
 
 ProviderDependency = Annotated[LPTrackerAdapter, Depends(get_provider_adapter)]
+
+
+class ClientAuthenticationError(Exception):
+    """Stops request dependency resolution after a neutral client auth failure."""
 
 
 def get_configured_provider_account() -> str:
@@ -24,17 +28,17 @@ ProviderAccountDependency = Annotated[str, Depends(get_configured_provider_accou
 async def get_authenticated_session(
     auth_service: AuthServiceDependency,
     token: Annotated[str | None, Header(alias="token")] = None,
-) -> AuthenticatedSession | JSONResponse:
+) -> AuthenticatedSession:
     if not token:
-        return authentication_error()
+        raise ClientAuthenticationError
     try:
         return await auth_service.authenticate(token)
     except AuthenticationFailed:
-        return authentication_error()
+        raise ClientAuthenticationError from None
 
 
 AuthenticatedSessionDependency = Annotated[
-    AuthenticatedSession | JSONResponse,
+    AuthenticatedSession,
     Depends(get_authenticated_session),
 ]
 
@@ -84,8 +88,6 @@ async def projects(
     provider: ProviderDependency,
     provider_account: ProviderAccountDependency,
 ) -> JSONResponse:
-    if isinstance(access, JSONResponse):
-        return access
     try:
         project = await read_allowed_project(
             access,
@@ -105,8 +107,6 @@ async def project(
     provider: ProviderDependency,
     provider_account: ProviderAccountDependency,
 ) -> JSONResponse:
-    if isinstance(access, JSONResponse):
-        return access
     try:
         result = await read_allowed_project(access, provider, provider_account, project_id)
     except LookupError:
