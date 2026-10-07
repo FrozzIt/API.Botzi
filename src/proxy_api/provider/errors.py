@@ -16,3 +16,7 @@ class ProviderAuthenticationError(ProviderError):
 
 class ProviderProtocolError(ProviderError):
     """The provider returned an unsupported response."""
+
+
+class ProviderObjectNotFound(ProviderError):
+    """The provider neutrally reported that a read target is unavailable."""

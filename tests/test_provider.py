@@ -12,6 +12,7 @@ from proxy_api.provider.client import LPTrackerAdapter
 from proxy_api.provider.errors import (
     ProviderAuthenticationError,
     ProviderDeadlineExceeded,
+    ProviderObjectNotFound,
     ProviderProtocolError,
     ProviderUnavailable,
 )
@@ -284,3 +285,42 @@ async def test_redirect_is_not_followed_or_exposed() -> None:
     assert calls == 1
     assert "internal-provider" not in str(captured.value)
     assert "secret-marker" not in str(captured.value)
+
+
+@pytest.mark.asyncio
+async def test_raw_list_read_response_is_supported() -> None:
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, json=[{"id": 1}])
+
+    tokens = CallbackTokenManager()
+    tokens.current = ProviderToken("internal-token", "generation")
+    adapter = make_adapter(httpx.MockTransport(handler), RecordingQuota(), tokens)
+    try:
+        response = await adapter.get("/list")
+    finally:
+        await adapter.aclose()
+
+    assert response == [{"id": 1}]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("code", [400, 404])
+async def test_read_not_found_is_neutral(code: int) -> None:
+    marker = "raw-provider-not-found-secret"
+
+    def handler(_: httpx.Request) -> httpx.Response:
+        return httpx.Response(
+            200,
+            json={"status": "error", "errors": [{"code": code, "message": marker}]},
+        )
+
+    tokens = CallbackTokenManager()
+    tokens.current = ProviderToken("internal-token", "generation")
+    adapter = make_adapter(httpx.MockTransport(handler), RecordingQuota(), tokens)
+    try:
+        with pytest.raises(ProviderObjectNotFound) as captured:
+            await adapter.get("/missing")
+    finally:
+        await adapter.aclose()
+
+    assert marker not in str(captured.value)
