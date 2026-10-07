@@ -10,6 +10,7 @@ import httpx
 from proxy_api.provider.errors import (
     ProviderAuthenticationError,
     ProviderDeadlineExceeded,
+    ProviderObjectNotFound,
     ProviderProtocolError,
     ProviderUnavailable,
 )
@@ -56,7 +57,7 @@ class LPTrackerAdapter:
         *,
         params: Mapping[str, str | int] | None = None,
         deadline_seconds: float | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | list[Any]:
         if not path.startswith("/") or path.startswith("//"):
             raise ValueError("Provider path must be relative to the configured host")
         budget = self._default_deadline_seconds if deadline_seconds is None else deadline_seconds
@@ -73,7 +74,7 @@ class LPTrackerAdapter:
                     token=token.value,
                     params=params,
                 )
-                if self._is_unauthorized(response):
+                if isinstance(response, dict) and self._is_unauthorized(response):
                     token = await self._tokens.refresh_after_unauthorized(
                         token.generation,
                         self._login,
@@ -86,9 +87,13 @@ class LPTrackerAdapter:
                         token=token.value,
                         params=params,
                     )
-                if self._is_unauthorized(response):
+                if isinstance(response, dict) and self._is_unauthorized(response):
                     raise ProviderAuthenticationError("Provider authentication failed")
+                if isinstance(response, list):
+                    return response
                 if response.get("status") != "success":
+                    if self._is_not_found(response):
+                        raise ProviderObjectNotFound("Provider object not found")
                     raise ProviderUnavailable("Provider unavailable")
                 return response
         except TimeoutError:
@@ -106,6 +111,8 @@ class LPTrackerAdapter:
                 "version": self._version,
             },
         )
+        if not isinstance(response, dict):
+            raise ProviderProtocolError("Provider response is invalid")
         if response.get("status") != "success":
             raise ProviderAuthenticationError("Provider authentication failed")
         result = response.get("result")
@@ -125,7 +132,7 @@ class LPTrackerAdapter:
         token: str | None = None,
         params: Mapping[str, str | int] | None = None,
         json_body: Mapping[str, str] | None = None,
-    ) -> dict[str, Any]:
+    ) -> dict[str, Any] | list[Any]:
         await self._quota.acquire(deadline)
         remaining = deadline - asyncio.get_running_loop().time()
         if remaining <= 0:
@@ -160,7 +167,7 @@ class LPTrackerAdapter:
             payload = json.loads(body)
         except (UnicodeDecodeError, json.JSONDecodeError):
             raise ProviderProtocolError("Provider response is invalid") from None
-        if not isinstance(payload, dict):
+        if not isinstance(payload, dict | list):
             raise ProviderProtocolError("Provider response is invalid")
         return payload
 
@@ -172,3 +179,12 @@ class LPTrackerAdapter:
         if not isinstance(errors, list):
             return False
         return any(isinstance(error, dict) and error.get("code") == 401 for error in errors)
+
+    @staticmethod
+    def _is_not_found(response: Mapping[str, Any]) -> bool:
+        if response.get("status") != "error":
+            return False
+        errors = response.get("errors")
+        if not isinstance(errors, list):
+            return False
+        return any(isinstance(error, dict) and error.get("code") in {400, 404} for error in errors)
