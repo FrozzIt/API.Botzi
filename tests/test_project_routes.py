@@ -53,11 +53,14 @@ class FakeProvider:
             },
         }
         self.error: Exception | None = None
+        self.response_override: object | None = None
 
-    async def get(self, path: str) -> dict[str, object]:
+    async def get(self, path: str) -> object:
         self.calls.append(path)
         if self.error is not None:
             raise self.error
+        if self.response_override is not None:
+            return self.response_override
         project_id = int(path.rsplit("/", 1)[1])
         return {"status": "success", "result": self.responses[project_id]}
 
@@ -250,6 +253,27 @@ def test_provider_error_is_neutral() -> None:
     }
     assert "raw provider" not in response.text
     assert "other-project" not in response.text
+
+
+@pytest.mark.parametrize("path", ["/projects", "/project/10001"])
+def test_top_level_provider_list_fails_closed(path: str) -> None:
+    client, _, provider = make_client()
+    provider.response_override = [
+        {
+            "id": 10001,
+            "internal_secret": "raw-list-marker-must-not-leak",
+        }
+    ]
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 503, "message": "Service unavailable"}],
+    }
+    assert "raw-list-marker" not in response.text
+    assert provider.calls == ["/project/10001"]
 
 
 def test_unexpected_provider_fields_are_not_returned() -> None:
