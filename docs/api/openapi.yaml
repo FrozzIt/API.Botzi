@@ -1,0 +1,1124 @@
+openapi: 3.0.3
+info:
+  title: ProxyAPI client contract
+  version: 0.5.0-draft
+  description: |
+    Черновик контракта задачи 0.5: 52 операции v1 и 12 deferred.
+    Доставка callback также deferred, но не входит в 64 операции.
+    Схемы данных остаются черновыми там, где provider shape не подтверждён.
+servers:
+  - url: https://proxy.example.invalid
+    description: Адрес-заглушка; среда развёртывания не утверждена
+security:
+  - bearerAuth: []
+tags:
+  - name: authorization
+  - name: project
+  - name: contact
+  - name: view
+  - name: lead
+  - name: staff
+  - name: task
+  - name: label
+paths:
+  /login:
+    post:
+      tags: [authorization]
+      summary: 'A01: Авторизация в ProxyAPI'
+      operationId: proxyA01
+      x-contract-id: A01
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      security: []
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+  /logout:
+    post:
+      tags: [authorization]
+      summary: 'A02: Выход из ProxyAPI'
+      operationId: proxyA02
+      x-contract-id: A02
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /projects:
+    get:
+      tags: [project]
+      summary: 'P01: Список разрешённых проектов'
+      operationId: proxyP01
+      x-contract-id: P01
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [project]
+      summary: 'P02: Разрешённый проект по ID'
+      operationId: proxyP02
+      x-contract-id: P02
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/customs:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [project]
+      summary: 'P03: Поля лидов проекта'
+      operationId: proxyP03
+      x-contract-id: P03
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/fields:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [project]
+      summary: 'P04: Поля контактов проекта'
+      operationId: proxyP04
+      x-contract-id: P04
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/callback-url:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    put:
+      tags: [project]
+      summary: 'P05: Настройка webhook лида'
+      operationId: proxyP05
+      x-contract-id: P05
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [project]
+      summary: 'P06: Список webhook лида'
+      operationId: proxyP06
+      x-contract-id: P06
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/project-callback-url:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    put:
+      tags: [project]
+      summary: 'P07: Настройка webhook CRM'
+      operationId: proxyP07
+      x-contract-id: P07
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    get:
+      tags: [project]
+      summary: 'P08: Список webhook CRM'
+      operationId: proxyP08
+      x-contract-id: P08
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/widget:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [project]
+      summary: 'P09: Настройки виджета'
+      operationId: proxyP09
+      x-contract-id: P09
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [project]
+      summary: 'P10: Изменить настройки виджета'
+      operationId: proxyP10
+      x-contract-id: P10
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/funnel:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [project]
+      summary: 'P11: Шаги воронки'
+      operationId: proxyP11
+      x-contract-id: P11
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/funnel/{funnel_id}:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+      - $ref: '#/components/parameters/funnel_id'
+    get:
+      tags: [project]
+      summary: 'P12: Шаг воронки'
+      operationId: proxyP12
+      x-contract-id: P12
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/autofunnels:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [project]
+      summary: 'P13: Автоворонки'
+      operationId: proxyP13
+      x-contract-id: P13
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /project/{project_id}/autofunnels/{autofunnel_id}:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+      - $ref: '#/components/parameters/autofunnel_id'
+    patch:
+      tags: [project]
+      summary: 'P14: Изменить автоворонку'
+      operationId: proxyP14
+      x-contract-id: P14
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /contact/search:
+    get:
+      tags: [contact]
+      summary: 'C01: Поиск контактов'
+      operationId: proxyC01
+      x-contract-id: C01
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /contact:
+    post:
+      tags: [contact]
+      summary: 'C02: Создать контакт'
+      operationId: proxyC02
+      x-contract-id: C02
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /contact/{contact_id}:
+    parameters:
+      - $ref: '#/components/parameters/contact_id'
+    get:
+      tags: [contact]
+      summary: 'C03: Контакт по ID'
+      operationId: proxyC03
+      x-contract-id: C03
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [contact]
+      summary: 'C04: Изменить контакт'
+      operationId: proxyC04
+      x-contract-id: C04
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [contact]
+      summary: 'C05: Удалить контакт'
+      operationId: proxyC05
+      x-contract-id: C05
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /contact/details/{detail_id}:
+    parameters:
+      - $ref: '#/components/parameters/detail_id'
+    get:
+      tags: [contact]
+      summary: 'C06: Контактные данные'
+      operationId: proxyC06
+      x-contract-id: C06
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [contact]
+      summary: 'C07: Изменить контактные данные'
+      operationId: proxyC07
+      x-contract-id: C07
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [contact]
+      summary: 'C08: Удалить контактные данные'
+      operationId: proxyC08
+      x-contract-id: C08
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /contact/{contact_id}/leads:
+    parameters:
+      - $ref: '#/components/parameters/contact_id'
+    get:
+      tags: [contact]
+      summary: 'C09: Лиды контакта'
+      operationId: proxyC09
+      x-contract-id: C09
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /contact/{contact_id}/field/{field_id}:
+    parameters:
+      - $ref: '#/components/parameters/contact_id'
+      - $ref: '#/components/parameters/field_id'
+    get:
+      tags: [contact]
+      summary: 'C10: Поле контакта'
+      operationId: proxyC10
+      x-contract-id: C10
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [contact]
+      summary: 'C11: Изменить поле контакта'
+      operationId: proxyC11
+      x-contract-id: C11
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [contact]
+      summary: 'C12: Очистить поле контакта'
+      operationId: proxyC12
+      x-contract-id: C12
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /view/{view_id}:
+    parameters:
+      - $ref: '#/components/parameters/view_id'
+    get:
+      tags: [view]
+      summary: 'V01: Просмотр по ID'
+      operationId: proxyV01
+      x-contract-id: V01
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [view]
+      summary: 'V03: Изменить просмотр'
+      operationId: proxyV03
+      x-contract-id: V03
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [view]
+      summary: 'V04: Удалить просмотр'
+      operationId: proxyV04
+      x-contract-id: V04
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /view:
+    post:
+      tags: [view]
+      summary: 'V02: Создать просмотр'
+      operationId: proxyV02
+      x-contract-id: V02
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead:
+    post:
+      tags: [lead]
+      summary: 'L01: Создать лид'
+      operationId: proxyL01
+      x-contract-id: L01
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /custom/{project_id}/create:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    post:
+      tags: [lead]
+      summary: 'L02: Создать поле лида'
+      operationId: proxyL02
+      x-contract-id: L02
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /custom/{project_id}/{custom_id}/add-category:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+      - $ref: '#/components/parameters/custom_id'
+    patch:
+      tags: [lead]
+      summary: 'L03: Добавить категории поля'
+      operationId: proxyL03
+      x-contract-id: L03
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    get:
+      tags: [lead]
+      summary: 'L04: Лид по ID'
+      operationId: proxyL04
+      x-contract-id: L04
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [lead]
+      summary: 'L06: Изменить лид'
+      operationId: proxyL06
+      x-contract-id: L06
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [lead]
+      summary: 'L07: Удалить лид'
+      operationId: proxyL07
+      x-contract-id: L07
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{project_id}/list:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [lead]
+      summary: 'L05: Список лидов'
+      operationId: proxyL05
+      x-contract-id: L05
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/call:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    post:
+      tags: [lead]
+      summary: 'L08: Инициировать звонок'
+      operationId: proxyL08
+      x-contract-id: L08
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/file:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    post:
+      tags: [lead]
+      summary: 'L09: Загрузить файл'
+      operationId: proxyL09
+      x-contract-id: L09
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/custom/{custom_id}/file/{file_id}:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+      - $ref: '#/components/parameters/custom_id'
+      - $ref: '#/components/parameters/file_id'
+    get:
+      tags: [lead]
+      summary: 'L10: Получить файл'
+      operationId: proxyL10
+      x-contract-id: L10
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/owner:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    put:
+      tags: [lead]
+      summary: 'L11: Сменить владельца'
+      operationId: proxyL11
+      x-contract-id: L11
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/funnel:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    put:
+      tags: [lead]
+      summary: 'L12: Сменить шаг'
+      operationId: proxyL12
+      x-contract-id: L12
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/custom/{field_id}:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+      - $ref: '#/components/parameters/field_id'
+    get:
+      tags: [lead]
+      summary: 'L13: Поле лида'
+      operationId: proxyL13
+      x-contract-id: L13
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [lead]
+      summary: 'L14: Изменить поле лида'
+      operationId: proxyL14
+      x-contract-id: L14
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [lead]
+      summary: 'L15: Очистить поле лида'
+      operationId: proxyL15
+      x-contract-id: L15
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/comment:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    post:
+      tags: [lead]
+      summary: 'L16: Добавить комментарий'
+      operationId: proxyL16
+      x-contract-id: L16
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/comments:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    get:
+      tags: [lead]
+      summary: 'L17: Комментарии лида'
+      operationId: proxyL17
+      x-contract-id: L17
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/payment:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    post:
+      tags: [lead]
+      summary: 'L18: Добавить платёж'
+      operationId: proxyL18
+      x-contract-id: L18
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/messageReceive/{lead_id}:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    post:
+      tags: [lead]
+      summary: 'L19: Добавить входящее сообщение'
+      operationId: proxyL19
+      x-contract-id: L19
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/chatHistory/{lead_id}:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    get:
+      tags: [lead]
+      summary: 'L20: История чата'
+      operationId: proxyL20
+      x-contract-id: L20
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /lead/{lead_id}/calls:
+    parameters:
+      - $ref: '#/components/parameters/lead_id'
+    get:
+      tags: [lead]
+      summary: 'L21: Звонки лида'
+      operationId: proxyL21
+      x-contract-id: L21
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /max/messageStatus:
+    post:
+      tags: [lead]
+      summary: 'L22: Статус MAX-сообщений'
+      operationId: proxyL22
+      x-contract-id: L22
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /staff:
+    get:
+      tags: [staff]
+      summary: 'S01: Сотрудники аккаунта'
+      operationId: proxyS01
+      x-contract-id: S01
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /task:
+    post:
+      tags: [task]
+      summary: 'T01: Создать задачу'
+      operationId: proxyT01
+      x-contract-id: T01
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /task/{task_id}:
+    parameters:
+      - $ref: '#/components/parameters/task_id'
+    get:
+      tags: [task]
+      summary: 'T02: Задача по ID'
+      operationId: proxyT02
+      x-contract-id: T02
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    put:
+      tags: [task]
+      summary: 'T04: Изменить задачу'
+      operationId: proxyT04
+      x-contract-id: T04
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [task]
+      summary: 'T05: Удалить задачу'
+      operationId: proxyT05
+      x-contract-id: T05
+      x-release-status: deferred
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/Deferred'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /task/{project_id}/list:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [task]
+      summary: 'T03: Список задач'
+      operationId: proxyT03
+      x-contract-id: T03
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /label:
+    post:
+      tags: [label]
+      summary: 'M01: Создать метку'
+      operationId: proxyM01
+      x-contract-id: M01
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /label/{project_id}/list:
+    parameters:
+      - $ref: '#/components/parameters/project_id'
+    get:
+      tags: [label]
+      summary: 'M02: Список меток'
+      operationId: proxyM02
+      x-contract-id: M02
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+  /label/{label_id}:
+    parameters:
+      - $ref: '#/components/parameters/label_id'
+    put:
+      tags: [label]
+      summary: 'M03: Изменить метку'
+      operationId: proxyM03
+      x-contract-id: M03
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      requestBody:
+        $ref: '#/components/requestBodies/GenericJson'
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+    delete:
+      tags: [label]
+      summary: 'M04: Удалить метку'
+      operationId: proxyM04
+      x-contract-id: M04
+      x-release-status: v1
+      x-schema-status: draft-not-provider-confirmed
+      responses:
+        '200':
+          $ref: '#/components/responses/V1'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+  parameters:
+    project_id:
+      name: project_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    funnel_id:
+      name: funnel_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    autofunnel_id:
+      name: autofunnel_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    contact_id:
+      name: contact_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    detail_id:
+      name: detail_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    field_id:
+      name: field_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    view_id:
+      name: view_id
+      in: path
+      required: true
+      schema:
+        type: string
+        description: Числовой ID или UUID; точный provider-формат зависит от операции.
+    custom_id:
+      name: custom_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    lead_id:
+      name: lead_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    file_id:
+      name: file_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    task_id:
+      name: task_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+    label_id:
+      name: label_id
+      in: path
+      required: true
+      schema:
+        type: integer
+        format: int64
+  requestBodies:
+    GenericJson:
+      required: true
+      description: Черновой JSON body; точные поля фиксируются после contract-проверки конкретной операции.
+      content:
+        application/json:
+          schema:
+            type: object
+            additionalProperties: true
+  responses:
+    V1:
+      description: |
+        Ответ операции v1. Envelope и payload конкретного метода остаются
+        черновыми, если не подтверждены отдельным DOC/LIVE evidence.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/V1Response'
+    Deferred:
+      description: Операция отсутствует в этой версии после успешной локальной авторизации.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/DeferredResponse'
+    Unauthorized:
+      description: Локальная авторизация ProxyAPI не пройдена.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/ErrorResponse'
+  schemas:
+    V1Response:
+      type: object
+      description: Черновой envelope; не подтверждает непроверенную provider-схему.
+      required: [status]
+      properties:
+        status:
+          type: string
+        data:
+          nullable: true
+      additionalProperties: true
+    ErrorResponse:
+      type: object
+      required: [status, errors]
+      properties:
+        status:
+          type: string
+          example: error
+        errors:
+          type: array
+          items:
+            type: object
+            additionalProperties: true
+      additionalProperties: true
+    DeferredResponse:
+      type: object
+      required: [status, errors]
+      properties:
+        status:
+          type: string
+          enum: [error]
+        errors:
+          type: array
+          minItems: 1
+          maxItems: 1
+          items:
+            type: object
+            required: [code, message]
+            properties:
+              code:
+                type: integer
+                enum: [501]
+              message:
+                type: string
+                enum: ['Operation is not available in this release']
+            additionalProperties: false
+      additionalProperties: false
