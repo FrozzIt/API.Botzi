@@ -1,6 +1,6 @@
 openapi: 3.0.3
 info:
-  title: ProxyAPI client contract
+  title: Клиентский контракт ProxyAPI
   version: 0.5.0-draft
   description: |
     Черновик контракта задачи 0.5: 52 операции v1 и 12 deferred.
