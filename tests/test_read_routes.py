@@ -570,21 +570,55 @@ def test_unexpected_fields_and_nested_service_data_are_not_returned(
     assert "custom" not in result.text
 
 
-@pytest.mark.parametrize("path", ["/task/50001", "/task/10001/list"])
-def test_task_staff_data_and_internal_urls_are_redacted(path: str) -> None:
-    client, _ = make_client()
+@pytest.mark.parametrize(
+    ("path", "response_key"),
+    [
+        ("/task/50001", "/task/50001"),
+        ("/task/10001/list", "/task/10001/list"),
+    ],
+)
+def test_unproven_task_links_staff_data_and_internal_urls_are_redacted(
+    path: str,
+    response_key: str,
+) -> None:
+    client, provider = make_client()
+    stored_response = provider.responses[response_key]
+    target = stored_response["result"] if isinstance(stored_response, dict) else stored_response
+    task = target[0] if isinstance(target, list) else target
+    assert isinstance(task, dict)
+    task["lead_id"] = 39002
+    task["owner_id"] = 69002
+    task["observers"] = [
+        {
+            "id": 69003,
+            "name": "Foreign project staff",
+            "avatar": "https://provider.invalid/foreign-avatar",
+        }
+    ]
+    task["labels"] = [
+        {
+            "id": 79002,
+            "name": "Foreign project label",
+            "color": "FFFFFF",
+        }
+    ]
 
     with client:
         response = client.get(path, headers={"token": "token-a"})
 
     payload = response.json()["result"]
     result = payload[0] if isinstance(payload, list) else payload
-    assert result["observers"] == [{"id": 60001}]
-    assert result["labels"] == [{"id": 52001, "name": "Safe label", "color": "F7F0C5"}]
+    assert "lead_id" not in result
+    assert "owner_id" not in result
+    assert "observers" not in result
+    assert "labels" not in result
     for forbidden in (
-        "Private Staff Name",
-        "staff@example.test",
-        "70000000000",
+        "39002",
+        "69002",
+        "69003",
+        "79002",
+        "Foreign project staff",
+        "Foreign project label",
         "avatar",
         "internal_url",
         "provider.invalid",

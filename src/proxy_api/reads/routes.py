@@ -234,21 +234,6 @@ def _serialize_view(
     return public_view
 
 
-def _serialize_label(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise ProviderProtocolError("Provider response is invalid")
-    public_label: dict[str, object] = {"id": _require_identifier(value.get("id"))}
-    for field in ("name", "color"):
-        _copy_optional_string(value, public_label, field)
-    return public_label
-
-
-def _serialize_staff_reference(value: object) -> dict[str, object]:
-    if not isinstance(value, dict):
-        raise ProviderProtocolError("Provider response is invalid")
-    return {"id": _require_identifier(value.get("id"))}
-
-
 def _serialize_task(
     value: object,
     expected_project_id: int,
@@ -265,27 +250,16 @@ def _serialize_task(
     if _require_int(value.get("project_id")) != expected_project_id:
         raise ReadAccessDenied
 
-    observers = value.get("observers", [])
-    if not isinstance(observers, list):
-        raise ProviderProtocolError("Provider response is invalid")
-    labels = value.get("labels", [])
-    if not isinstance(labels, list):
-        raise ProviderProtocolError("Provider response is invalid")
-
     public_task: dict[str, object] = {
         "id": task_id,
         "project_id": expected_project_id,
-        "observers": [_serialize_staff_reference(item) for item in observers],
-        "labels": [_serialize_label(item) for item in labels],
     }
     for field in ("title", "text", "remind_method"):
         _copy_optional_string(value, public_task, field)
     for field in (
-        "owner_id",
         "date_start",
         "date_end",
         "remind_type",
-        "lead_id",
         "visibility",
         "status",
     ):
