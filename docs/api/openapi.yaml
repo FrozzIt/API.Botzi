@@ -10,7 +10,7 @@ servers:
   - url: https://proxy.example.invalid
     description: Адрес-заглушка; среда развёртывания не утверждена
 security:
-  - bearerAuth: []
+  - clientToken: []
 tags:
   - name: authorization
   - name: project
@@ -46,8 +46,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /projects:
     get:
       tags: [project]
@@ -59,8 +57,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -74,8 +70,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/customs:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -89,8 +83,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/fields:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -104,8 +96,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/callback-url:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -119,8 +109,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     get:
       tags: [project]
       summary: 'P06: Список webhook лида'
@@ -131,8 +119,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/project-callback-url:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -146,8 +132,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     get:
       tags: [project]
       summary: 'P08: Список webhook CRM'
@@ -158,8 +142,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/widget:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -173,8 +155,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [project]
       summary: 'P10: Изменить настройки виджета'
@@ -187,8 +167,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/funnel:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -202,8 +180,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/funnel/{funnel_id}:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -218,8 +194,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/autofunnels:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -233,8 +207,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /project/{project_id}/autofunnels/{autofunnel_id}:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -251,8 +223,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /contact/search:
     get:
       tags: [contact]
@@ -264,8 +234,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /contact:
     post:
       tags: [contact]
@@ -279,8 +247,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /contact/{contact_id}:
     parameters:
       - $ref: '#/components/parameters/contact_id'
@@ -294,8 +260,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [contact]
       summary: 'C04: Изменить контакт'
@@ -308,8 +272,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     delete:
       tags: [contact]
       summary: 'C05: Удалить контакт'
@@ -320,8 +282,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /contact/details/{detail_id}:
     parameters:
       - $ref: '#/components/parameters/detail_id'
@@ -335,8 +295,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [contact]
       summary: 'C07: Изменить контактные данные'
@@ -349,8 +307,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     delete:
       tags: [contact]
       summary: 'C08: Удалить контактные данные'
@@ -361,8 +317,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /contact/{contact_id}/leads:
     parameters:
       - $ref: '#/components/parameters/contact_id'
@@ -376,8 +330,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /contact/{contact_id}/field/{field_id}:
     parameters:
       - $ref: '#/components/parameters/contact_id'
@@ -392,8 +344,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [contact]
       summary: 'C11: Изменить поле контакта'
@@ -406,8 +356,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     delete:
       tags: [contact]
       summary: 'C12: Очистить поле контакта'
@@ -418,8 +366,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /view/{view_id}:
     parameters:
       - $ref: '#/components/parameters/view_id'
@@ -433,8 +379,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [view]
       summary: 'V03: Изменить просмотр'
@@ -447,8 +391,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     delete:
       tags: [view]
       summary: 'V04: Удалить просмотр'
@@ -459,8 +401,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /view:
     post:
       tags: [view]
@@ -474,8 +414,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead:
     post:
       tags: [lead]
@@ -489,8 +427,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /custom/{project_id}/create:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -506,8 +442,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /custom/{project_id}/{custom_id}/add-category:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -524,8 +458,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -539,8 +471,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [lead]
       summary: 'L06: Изменить лид'
@@ -553,8 +483,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     delete:
       tags: [lead]
       summary: 'L07: Удалить лид'
@@ -565,8 +493,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{project_id}/list:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -580,8 +506,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/call:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -597,8 +521,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/file:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -614,8 +536,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/custom/{custom_id}/file/{file_id}:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -631,8 +551,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/owner:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -646,8 +564,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/funnel:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -663,8 +579,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/custom/{field_id}:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -679,8 +593,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [lead]
       summary: 'L14: Изменить поле лида'
@@ -693,8 +605,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     delete:
       tags: [lead]
       summary: 'L15: Очистить поле лида'
@@ -705,8 +615,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/comment:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -722,8 +630,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/comments:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -737,8 +643,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/payment:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -754,8 +658,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/messageReceive/{lead_id}:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -771,8 +673,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/chatHistory/{lead_id}:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -786,8 +686,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /lead/{lead_id}/calls:
     parameters:
       - $ref: '#/components/parameters/lead_id'
@@ -801,8 +699,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /max/messageStatus:
     post:
       tags: [lead]
@@ -814,8 +710,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /staff:
     get:
       tags: [staff]
@@ -827,8 +721,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /task:
     post:
       tags: [task]
@@ -840,8 +732,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /task/{task_id}:
     parameters:
       - $ref: '#/components/parameters/task_id'
@@ -855,8 +745,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     put:
       tags: [task]
       summary: 'T04: Изменить задачу'
@@ -867,8 +755,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     delete:
       tags: [task]
       summary: 'T05: Удалить задачу'
@@ -879,8 +765,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/Deferred'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /task/{project_id}/list:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -894,8 +778,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /label:
     post:
       tags: [label]
@@ -909,8 +791,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /label/{project_id}/list:
     parameters:
       - $ref: '#/components/parameters/project_id'
@@ -924,8 +804,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
   /label/{label_id}:
     parameters:
       - $ref: '#/components/parameters/label_id'
@@ -941,8 +819,6 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
     delete:
       tags: [label]
       summary: 'M04: Удалить метку'
@@ -953,13 +829,12 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/V1'
-        '401':
-          $ref: '#/components/responses/Unauthorized'
 components:
   securitySchemes:
-    bearerAuth:
-      type: http
-      scheme: bearer
+    clientToken:
+      type: apiKey
+      in: header
+      name: token
   parameters:
     project_id:
       name: project_id
@@ -1057,24 +932,26 @@ components:
   responses:
     V1:
       description: |
-        Ответ операции v1. Envelope и payload конкретного метода остаются
-        черновыми, если не подтверждены отдельным DOC/LIVE evidence.
+        HTTP 200. После успешной локальной авторизации возвращается ответ
+        операции v1; при непройденной локальной авторизации — application 401.
+        Envelope и payload конкретного метода остаются черновыми, если не
+        подтверждены отдельным DOC/LIVE evidence.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/V1Response'
+            anyOf:
+              - $ref: '#/components/schemas/V1Response'
+              - $ref: '#/components/schemas/AuthErrorResponse'
     Deferred:
-      description: Операция отсутствует в этой версии после успешной локальной авторизации.
+      description: |
+        HTTP 200. До успешной локальной авторизации возвращается application
+        401; после неё — зафиксированный deferred-ответ application 501.
       content:
         application/json:
           schema:
-            $ref: '#/components/schemas/DeferredResponse'
-    Unauthorized:
-      description: Локальная авторизация ProxyAPI не пройдена.
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/ErrorResponse'
+            oneOf:
+              - $ref: '#/components/schemas/AuthErrorResponse'
+              - $ref: '#/components/schemas/DeferredResponse'
   schemas:
     V1Response:
       type: object
@@ -1086,19 +963,29 @@ components:
         data:
           nullable: true
       additionalProperties: true
-    ErrorResponse:
+    AuthErrorResponse:
       type: object
       required: [status, errors]
       properties:
         status:
           type: string
-          example: error
+          enum: [error]
         errors:
           type: array
+          minItems: 1
+          maxItems: 1
           items:
             type: object
-            additionalProperties: true
-      additionalProperties: true
+            required: [code, message]
+            properties:
+              code:
+                type: integer
+                enum: [401]
+              message:
+                type: string
+                enum: ['Authentication failed']
+            additionalProperties: false
+      additionalProperties: false
     DeferredResponse:
       type: object
       required: [status, errors]

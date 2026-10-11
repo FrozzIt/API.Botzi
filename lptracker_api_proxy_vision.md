@@ -241,7 +241,8 @@ MVP можно считать достигшим цели, если:
 Согласованный архитектором scope v1, безопасные отличия и внешние отказы
 зафиксированы в [Decision 001](docs/decisions/001-v1-scope-contract.md): 52
 операции v1 и 12 deferred; доставка callback также deferred, но не входит в
-64 операции. Пакет ещё требует отдельной PM-приёмки и G0. Для deferred после
+64 операции. Пакет 0.5 принят 11.10.2026 на SHA
+`83ad3ec172877c8f258f0d153dc31e5d4b8776fa`; G0 остаётся pending. Для deferred после
 успешной локальной авторизации используется HTTP 200 с application code 501 и
 сообщением `Operation is not available in this release`, без object lookup и
 обращений к LPTracker, включая внутренний login. Предлагаемые application-коды
