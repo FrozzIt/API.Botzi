@@ -73,6 +73,8 @@ async def read_allowed_project(
         raise ProviderError("Provider account is unavailable")
 
     response = await provider.get(f"/project/{project_id}")
+    if not isinstance(response, dict):
+        raise ProviderProtocolError("Provider response is invalid")
     result = response.get("result")
     if not isinstance(result, dict):
         raise ProviderProtocolError("Provider response is invalid")

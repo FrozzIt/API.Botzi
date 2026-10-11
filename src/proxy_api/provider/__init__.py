@@ -5,6 +5,7 @@ from proxy_api.provider.errors import (
     ProviderAuthenticationError,
     ProviderDeadlineExceeded,
     ProviderError,
+    ProviderObjectNotFound,
     ProviderProtocolError,
     ProviderUnavailable,
 )
@@ -18,6 +19,7 @@ __all__ = [
     "ProviderAuthenticationError",
     "ProviderDeadlineExceeded",
     "ProviderError",
+    "ProviderObjectNotFound",
     "ProviderProtocolError",
     "ProviderToken",
     "ProviderUnavailable",

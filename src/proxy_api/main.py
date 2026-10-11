@@ -21,6 +21,8 @@ from proxy_api.projects.routes import (
 from proxy_api.projects.routes import (
     router as projects_router,
 )
+from proxy_api.reads.routes import ReadAccessDenied, read_not_found_error
+from proxy_api.reads.routes import router as reads_router
 
 
 async def config_revision_is_current(request: Request) -> bool:
@@ -56,6 +58,7 @@ def create_app() -> FastAPI:
     )
     application.include_router(auth_router)
     application.include_router(projects_router)
+    application.include_router(reads_router)
 
     @application.exception_handler(ClientAuthenticationError)
     async def client_authentication_error(
@@ -75,6 +78,13 @@ def create_app() -> FastAPI:
                 "errors": [{"code": 422, "message": "Request is not valid"}],
             }
         )
+
+    @application.exception_handler(ReadAccessDenied)
+    async def read_access_denied(
+        _: Request,
+        __: ReadAccessDenied,
+    ) -> JSONResponse:
+        return read_not_found_error()
 
     @application.get("/health", include_in_schema=False)
     async def healthcheck(
