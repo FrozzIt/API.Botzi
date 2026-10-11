@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
 
 import pytest
@@ -64,34 +64,109 @@ def lead_payload(project_id: int, lead_id: int, contact_id: int) -> dict[str, ob
     }
 
 
+def view_payload(project_id: int, view_id: int) -> dict[str, object]:
+    return {
+        "id": view_id,
+        "project_id": project_id,
+        "uuid": f"view-{view_id}",
+        "source": "test",
+        "page": "https://public.example.test/page",
+        "visitor": {"internal_id": "must-not-leak"},
+    }
+
+
+def task_payload(project_id: int, task_id: int, staff_id: int) -> dict[str, object]:
+    return {
+        "id": task_id,
+        "project_id": project_id,
+        "title": f"Task {task_id}",
+        "text": "Safe task text",
+        "owner_id": staff_id,
+        "date_start": 1_700_000_000,
+        "date_end": 1_700_003_600,
+        "remind_type": 1,
+        "remind_method": "popup",
+        "lead_id": task_id + 1000,
+        "visibility": 2,
+        "status": 0,
+        "observers": [
+            {
+                "id": staff_id,
+                "name": "Private Staff Name",
+                "email": "staff@example.test",
+                "phone": "70000000000",
+                "job": "Manager",
+                "avatar": "https://provider.invalid/private-avatar",
+                "last_project_id": project_id,
+            }
+        ],
+        "labels": [
+            {
+                "id": task_id + 2000,
+                "name": "Safe label",
+                "color": "F7F0C5",
+                "internal_url": "https://provider.invalid/private-label",
+            }
+        ],
+        "internal_url": "https://provider.invalid/private-task",
+    }
+
+
 class FakeProvider:
     def __init__(self) -> None:
         contact_a = contact_payload(10001, 20001)
         contact_b = contact_payload(10002, 20002)
         lead_a = lead_payload(10001, 30001, 20001)
         lead_b = lead_payload(10002, 30002, 20002)
+        view_a = view_payload(10001, 40001)
+        view_b = view_payload(10002, 40002)
+        task_a = task_payload(10001, 50001, 60001)
+        task_b = task_payload(10002, 50002, 60002)
         self.responses: dict[str, object] = {
+            "/contact/search:10001": {"status": "success", "result": [contact_a]},
+            "/contact/search:10002": {"status": "success", "result": [contact_b]},
             "/contact/20001": {"status": "success", "result": contact_a},
             "/contact/20002": {"status": "success", "result": contact_b},
+            "/view/40001": {"status": "success", "result": view_a},
+            "/view/40002": {"status": "success", "result": view_b},
+            "/view/view-40001": {"status": "success", "result": view_a},
             "/lead/30001": {"status": "success", "result": lead_a},
             "/lead/30002": {"status": "success", "result": lead_b},
             "/lead/10001/list": {"status": "success", "result": [lead_a]},
             "/lead/10002/list": [lead_b],
+            "/task/50001": {"status": "success", "result": task_a},
+            "/task/50002": {"status": "success", "result": task_b},
+            "/task/10001/list": {"status": "success", "result": [task_a]},
+            "/task/10002/list": [task_b],
         }
-        self.calls: list[tuple[str, Mapping[str, str | int] | None]] = []
+        self.calls: list[
+            tuple[
+                str,
+                Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None,
+            ]
+        ] = []
         self.error: Exception | None = None
 
     async def get(
         self,
         path: str,
         *,
-        params: Mapping[str, str | int] | None = None,
+        params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
     ) -> object:
         self.calls.append((path, params))
         if self.error is not None:
             raise self.error
+        response_key = path
+        if path == "/contact/search":
+            assert params is not None
+            project_id = (
+                next(value for key, value in params.items() if key == "project_id")
+                if isinstance(params, Mapping)
+                else next(value for key, value in params if key == "project_id")
+            )
+            response_key = f"{path}:{project_id}"
         try:
-            return self.responses[path]
+            return self.responses[response_key]
         except KeyError:
             raise ProviderObjectNotFound("private provider detail") from None
 
@@ -162,13 +237,99 @@ def test_two_clients_receive_only_owned_lead_lists() -> None:
 
 
 @pytest.mark.parametrize(
+    ("token", "path", "expected_id", "expected_project", "expected_call"),
+    [
+        (
+            "token-a",
+            "/contact/search?project_id=10001&phone=70000000001",
+            20001,
+            10001,
+            (
+                "/contact/search",
+                [("project_id", 10001), ("phone", "70000000001")],
+            ),
+        ),
+        (
+            "token-b",
+            "/contact/search?project_id=10002&email=client-b%40example.test",
+            20002,
+            10002,
+            (
+                "/contact/search",
+                [("project_id", 10002), ("email", "client-b@example.test")],
+            ),
+        ),
+        ("token-a", "/view/40001", 40001, 10001, ("/view/40001", None)),
+        ("token-b", "/view/40002", 40002, 10002, ("/view/40002", None)),
+        ("token-a", "/task/50001", 50001, 10001, ("/task/50001", None)),
+        ("token-b", "/task/50002", 50002, 10002, ("/task/50002", None)),
+    ],
+)
+def test_two_clients_can_read_only_owned_search_view_and_task_objects(
+    token: str,
+    path: str,
+    expected_id: int,
+    expected_project: int,
+    expected_call: tuple[
+        str,
+        Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None,
+    ],
+) -> None:
+    client, provider = make_client()
+
+    with client:
+        response = client.get(path, headers={"token": token})
+
+    assert response.json()["status"] == "success"
+    payload = response.json()["result"]
+    result = payload[0] if isinstance(payload, list) else payload
+    assert result["id"] == expected_id
+    assert result["project_id"] == expected_project
+    assert provider.calls == [expected_call]
+
+
+def test_two_clients_receive_only_owned_task_lists_in_both_provider_shapes() -> None:
+    client, provider = make_client()
+
+    with client:
+        response_a = client.get("/task/10001/list", headers={"token": "token-a"})
+        response_b = client.get("/task/10002/list", headers={"token": "token-b"})
+
+    assert [(item["id"], item["project_id"]) for item in response_a.json()["result"]] == [
+        (50001, 10001)
+    ]
+    assert [(item["id"], item["project_id"]) for item in response_b.json()["result"]] == [
+        (50002, 10002)
+    ]
+    assert provider.calls == [
+        ("/task/10001/list", {"offset": 0, "limit": 10}),
+        ("/task/10002/list", {"offset": 0, "limit": 10}),
+    ]
+
+
+def test_view_can_be_read_by_matching_uuid() -> None:
+    client, provider = make_client()
+
+    with client:
+        response = client.get("/view/view-40001", headers={"token": "token-a"})
+
+    assert response.json()["result"]["id"] == 40001
+    assert provider.calls == [("/view/view-40001", None)]
+
+
+@pytest.mark.parametrize(
     "path",
     [
+        "/contact/search?project_id=10002&phone=70000000001",
         "/contact/20001?project_id=10002",
+        "/view/40001?project_id=10002",
         "/lead/30001?project_id=10002",
         "/lead/10002/list",
         "/lead/10001/list?project_id=10002",
         "/lead/10001/list?project_id=10001&project_id=10001",
+        "/task/50001?project_id=10002",
+        "/task/10002/list",
+        "/task/10001/list?project_id=10002",
     ],
 )
 def test_conflicting_or_ambiguous_project_is_rejected_before_provider_call(path: str) -> None:
@@ -183,7 +344,7 @@ def test_conflicting_or_ambiguous_project_is_rejected_before_provider_call(path:
 
 @pytest.mark.parametrize(
     "path",
-    ["/contact/29999", "/lead/39999"],
+    ["/contact/29999", "/view/49999", "/lead/39999", "/task/59999"],
 )
 def test_unknown_object_is_neutral(path: str) -> None:
     client, provider = make_client()
@@ -196,13 +357,30 @@ def test_unknown_object_is_neutral(path: str) -> None:
     assert provider.calls == [(path, None)]
 
 
+def test_contact_search_without_matches_returns_an_empty_list() -> None:
+    client, provider = make_client()
+    provider.responses["/contact/search:10001"] = {"status": "success", "result": []}
+
+    with client:
+        response = client.get(
+            "/contact/search?project_id=10001&phone=79999999999",
+            headers={"token": "token-a"},
+        )
+
+    assert response.json() == {"status": "success", "result": []}
+
+
 @pytest.mark.parametrize(
     ("token", "path"),
     [
         ("token-a", "/contact/20002"),
         ("token-b", "/contact/20001"),
+        ("token-a", "/view/40002"),
+        ("token-b", "/view/40001"),
         ("token-a", "/lead/30002"),
         ("token-b", "/lead/30001"),
+        ("token-a", "/task/50002"),
+        ("token-b", "/task/50001"),
     ],
 )
 def test_foreign_object_is_indistinguishable_from_unknown(token: str, path: str) -> None:
@@ -220,6 +398,8 @@ def test_foreign_object_is_indistinguishable_from_unknown(token: str, path: str)
     [
         ("token-a", "/lead/10002/list"),
         ("token-b", "/lead/10001/list"),
+        ("token-a", "/task/10002/list"),
+        ("token-b", "/task/10001/list"),
     ],
 )
 def test_foreign_list_project_is_rejected_before_provider_call(
@@ -233,6 +413,67 @@ def test_foreign_list_project_is_rejected_before_provider_call(
 
     assert response.json() == not_found()
     assert provider.calls == []
+
+
+@pytest.mark.parametrize(
+    ("token", "project_id", "own_task", "foreign_project", "foreign_task", "foreign_staff"),
+    [
+        ("token-a", 10001, 50001, 10002, 50002, 60002),
+        ("token-b", 10002, 50002, 10001, 50001, 60001),
+    ],
+)
+def test_one_foreign_task_closes_the_whole_task_list(
+    token: str,
+    project_id: int,
+    own_task: int,
+    foreign_project: int,
+    foreign_task: int,
+    foreign_staff: int,
+) -> None:
+    client, provider = make_client()
+    stored_response = provider.responses[f"/task/{project_id}/list"]
+    result = stored_response["result"] if isinstance(stored_response, dict) else stored_response
+    assert isinstance(result, list)
+    result.append(task_payload(foreign_project, foreign_task, foreign_staff))
+
+    with client:
+        response = client.get(f"/task/{project_id}/list", headers={"token": token})
+
+    assert response.json() == not_found()
+    assert str(own_task) not in response.text
+    assert str(foreign_task) not in response.text
+
+
+@pytest.mark.parametrize(
+    ("token", "project_id", "own_contact", "foreign_project", "foreign_contact"),
+    [
+        ("token-a", 10001, 20001, 10002, 20002),
+        ("token-b", 10002, 20002, 10001, 20001),
+    ],
+)
+def test_one_foreign_contact_closes_the_whole_search_result(
+    token: str,
+    project_id: int,
+    own_contact: int,
+    foreign_project: int,
+    foreign_contact: int,
+) -> None:
+    client, provider = make_client()
+    response = provider.responses[f"/contact/search:{project_id}"]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, list)
+    result.append(contact_payload(foreign_project, foreign_contact))
+
+    with client:
+        response = client.get(
+            f"/contact/search?project_id={project_id}&phone=70000000001",
+            headers={"token": token},
+        )
+
+    assert response.json() == not_found()
+    assert str(own_contact) not in response.text
+    assert str(foreign_contact) not in response.text
 
 
 @pytest.mark.parametrize("path", ["/lead/30001", "/lead/10001/list"])
@@ -257,9 +498,16 @@ def test_mismatched_nested_contact_id_closes_whole_response(path: str) -> None:
 @pytest.mark.parametrize(
     ("path", "response_key"),
     [
+        (
+            "/contact/search?project_id=10001&phone=70000000001",
+            "/contact/search:10001",
+        ),
         ("/contact/20001", "/contact/20001"),
+        ("/view/40001", "/view/40001"),
         ("/lead/30001", "/lead/30001"),
         ("/lead/10001/list", "/lead/10001/list"),
+        ("/task/50001", "/task/50001"),
+        ("/task/10001/list", "/task/10001/list"),
     ],
 )
 def test_foreign_nested_project_link_closes_whole_response(
@@ -283,9 +531,16 @@ def test_foreign_nested_project_link_closes_whole_response(
 @pytest.mark.parametrize(
     ("path", "response_key"),
     [
+        (
+            "/contact/search?project_id=10001&phone=70000000001",
+            "/contact/search:10001",
+        ),
         ("/contact/20001", "/contact/20001"),
+        ("/view/40001", "/view/40001"),
         ("/lead/30001", "/lead/30001"),
         ("/lead/10001/list", "/lead/10001/list"),
+        ("/task/50001", "/task/50001"),
+        ("/task/10001/list", "/task/10001/list"),
     ],
 )
 def test_unexpected_fields_and_nested_service_data_are_not_returned(
@@ -298,6 +553,7 @@ def test_unexpected_fields_and_nested_service_data_are_not_returned(
     item = target[0] if isinstance(target, list) else target
     assert isinstance(item, dict)
     item["internal_secret"] = "must-not-leak"
+    item["provider_url"] = "https://provider.invalid/private"
     if isinstance(item.get("contact"), dict):
         item["contact"]["provider_url"] = "https://provider.invalid/private"
     elif isinstance(item.get("details"), list):
@@ -314,9 +570,39 @@ def test_unexpected_fields_and_nested_service_data_are_not_returned(
     assert "custom" not in result.text
 
 
+@pytest.mark.parametrize("path", ["/task/50001", "/task/10001/list"])
+def test_task_staff_data_and_internal_urls_are_redacted(path: str) -> None:
+    client, _ = make_client()
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    payload = response.json()["result"]
+    result = payload[0] if isinstance(payload, list) else payload
+    assert result["observers"] == [{"id": 60001}]
+    assert result["labels"] == [{"id": 52001, "name": "Safe label", "color": "F7F0C5"}]
+    for forbidden in (
+        "Private Staff Name",
+        "staff@example.test",
+        "70000000000",
+        "avatar",
+        "internal_url",
+        "provider.invalid",
+    ):
+        assert forbidden not in response.text
+
+
 @pytest.mark.parametrize(
     "path",
-    ["/contact/20001", "/lead/30001", "/lead/10001/list"],
+    [
+        "/contact/search?project_id=10001&phone=70000000001",
+        "/contact/20001",
+        "/view/40001",
+        "/lead/30001",
+        "/lead/10001/list",
+        "/task/50001",
+        "/task/10001/list",
+    ],
 )
 def test_provider_failure_is_neutral_and_does_not_leak(path: str) -> None:
     client, provider = make_client()
@@ -334,8 +620,47 @@ def test_provider_failure_is_neutral_and_does_not_leak(path: str) -> None:
 
 
 @pytest.mark.parametrize(
+    ("path", "response_key", "invalid_response"),
+    [
+        (
+            "/contact/search?project_id=10001&phone=70000000001",
+            "/contact/search:10001",
+            {"status": "success", "result": {}},
+        ),
+        ("/view/40001", "/view/40001", {"status": "success", "result": []}),
+        ("/task/50001", "/task/50001", {"status": "success", "result": "bad"}),
+        ("/task/10001/list", "/task/10001/list", {"status": "success", "result": {}}),
+    ],
+)
+def test_malformed_provider_response_is_neutral(
+    path: str,
+    response_key: str,
+    invalid_response: object,
+) -> None:
+    client, provider = make_client()
+    provider.responses[response_key] = invalid_response
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 503, "message": "Service unavailable"}],
+    }
+    assert "bad" not in response.text
+
+
+@pytest.mark.parametrize(
     "path",
-    ["/contact/20001", "/lead/30001", "/lead/10001/list"],
+    [
+        "/contact/search?project_id=10001&phone=70000000001",
+        "/contact/20001",
+        "/view/40001",
+        "/lead/30001",
+        "/lead/10001/list",
+        "/task/50001",
+        "/task/10001/list",
+    ],
 )
 def test_invalid_client_token_does_not_call_or_initialize_provider(path: str) -> None:
     application = create_app()
@@ -363,13 +688,69 @@ def test_invalid_client_token_does_not_call_or_initialize_provider(path: str) ->
 
 @pytest.mark.parametrize(
     "path",
-    ["/contact/search?project_id=10001", "/view/1", "/task/1", "/task/10001/list"],
+    [
+        "/contact/search?project_id=10001",
+        "/contact/search?project_id=10001&phone=",
+        "/contact/search?project_id=10001&max_user_id=one&max_user_id=two",
+    ],
 )
-def test_unproven_routes_remain_closed_without_provider_call(path: str) -> None:
+def test_contact_search_requires_one_unambiguous_non_empty_filter(path: str) -> None:
     client, provider = make_client()
 
     with client:
         response = client.get(path, headers={"token": "token-a"})
 
-    assert response.json().get("status") != "success"
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 422, "message": "Request is not valid"}],
+    }
     assert provider.calls == []
+
+
+def test_contact_search_forwards_repeated_phone_filters_without_unknown_parameters() -> None:
+    client, provider = make_client()
+
+    with client:
+        response = client.get(
+            "/contact/search?project_id=10001&phone=70000000001&phone=70000000002&ignored=x",
+            headers={"token": "token-a"},
+        )
+
+    assert response.json()["status"] == "success"
+    assert provider.calls == [
+        (
+            "/contact/search",
+            [
+                ("project_id", 10001),
+                ("phone", "70000000001"),
+                ("phone", "70000000002"),
+            ],
+        )
+    ]
+
+
+@pytest.mark.parametrize(
+    ("path", "response_key", "changed_field", "changed_value"),
+    [
+        ("/view/40001", "/view/40001", "id", 40099),
+        ("/view/view-40001", "/view/view-40001", "uuid", "view-40099"),
+        ("/task/50001", "/task/50001", "id", 50099),
+    ],
+)
+def test_object_identifier_mismatch_is_neutral(
+    path: str,
+    response_key: str,
+    changed_field: str,
+    changed_value: object,
+) -> None:
+    client, provider = make_client()
+    response = provider.responses[response_key]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, dict)
+    result[changed_field] = changed_value
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json() == not_found()

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from typing import Any
 
 import httpx
@@ -55,7 +55,7 @@ class LPTrackerAdapter:
         self,
         path: str,
         *,
-        params: Mapping[str, str | int] | None = None,
+        params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
         deadline_seconds: float | None = None,
     ) -> dict[str, Any] | list[Any]:
         if not path.startswith("/") or path.startswith("//"):
@@ -130,7 +130,7 @@ class LPTrackerAdapter:
         *,
         deadline: float,
         token: str | None = None,
-        params: Mapping[str, str | int] | None = None,
+        params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
         json_body: Mapping[str, str] | None = None,
     ) -> dict[str, Any] | list[Any]:
         await self._quota.acquire(deadline)

@@ -34,6 +34,15 @@ def read_not_found_error() -> JSONResponse:
     )
 
 
+def request_not_valid_error() -> JSONResponse:
+    return JSONResponse(
+        {
+            "status": "error",
+            "errors": [{"code": 422, "message": "Request is not valid"}],
+        }
+    )
+
+
 async def get_project_scoped_session(
     request: Request,
     access: AuthenticatedSessionDependency,
@@ -113,6 +122,19 @@ def _copy_optional_string(
     target[field] = value
 
 
+def _copy_optional_int(
+    source: dict[str, object],
+    target: dict[str, object],
+    field: str,
+) -> None:
+    if field not in source:
+        return
+    value = source[field]
+    if value is not None and type(value) is not int:
+        raise ProviderProtocolError("Provider response is invalid")
+    target[field] = value
+
+
 def _serialize_contact(
     value: object,
     expected_project_id: int,
@@ -174,13 +196,24 @@ def _serialize_contact(
     return public_contact
 
 
-def _serialize_view(value: object, expected_project_id: int) -> dict[str, object]:
+def _serialize_view(
+    value: object,
+    expected_project_id: int,
+    *,
+    expected_view_id: str | None = None,
+) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ProviderProtocolError("Provider response is invalid")
     _validate_project_links(value, expected_project_id)
     view_id = _require_int(value.get("id"))
     if _require_int(value.get("project_id")) != expected_project_id:
         raise ReadAccessDenied
+    if expected_view_id is not None:
+        uuid = value.get("uuid")
+        matches_id = expected_view_id == str(view_id)
+        matches_uuid = isinstance(uuid, str) and expected_view_id == uuid
+        if not matches_id and not matches_uuid:
+            raise ReadAccessDenied
 
     public_view: dict[str, object] = {
         "id": view_id,
@@ -199,6 +232,65 @@ def _serialize_view(value: object, expected_project_id: int) -> dict[str, object
     ):
         _copy_optional_string(value, public_view, field)
     return public_view
+
+
+def _serialize_label(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ProviderProtocolError("Provider response is invalid")
+    public_label: dict[str, object] = {"id": _require_identifier(value.get("id"))}
+    for field in ("name", "color"):
+        _copy_optional_string(value, public_label, field)
+    return public_label
+
+
+def _serialize_staff_reference(value: object) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ProviderProtocolError("Provider response is invalid")
+    return {"id": _require_identifier(value.get("id"))}
+
+
+def _serialize_task(
+    value: object,
+    expected_project_id: int,
+    *,
+    expected_task_id: int | None = None,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ProviderProtocolError("Provider response is invalid")
+    _validate_project_links(value, expected_project_id)
+
+    task_id = _require_int(value.get("id"))
+    if expected_task_id is not None and task_id != expected_task_id:
+        raise ReadAccessDenied
+    if _require_int(value.get("project_id")) != expected_project_id:
+        raise ReadAccessDenied
+
+    observers = value.get("observers", [])
+    if not isinstance(observers, list):
+        raise ProviderProtocolError("Provider response is invalid")
+    labels = value.get("labels", [])
+    if not isinstance(labels, list):
+        raise ProviderProtocolError("Provider response is invalid")
+
+    public_task: dict[str, object] = {
+        "id": task_id,
+        "project_id": expected_project_id,
+        "observers": [_serialize_staff_reference(item) for item in observers],
+        "labels": [_serialize_label(item) for item in labels],
+    }
+    for field in ("title", "text", "remind_method"):
+        _copy_optional_string(value, public_task, field)
+    for field in (
+        "owner_id",
+        "date_start",
+        "date_end",
+        "remind_type",
+        "lead_id",
+        "visibility",
+        "status",
+    ):
+        _copy_optional_int(value, public_task, field)
+    return public_task
 
 
 def _serialize_lead(
@@ -260,6 +352,45 @@ def _ensure_provider_account(
         raise ProviderError("Provider account is unavailable")
 
 
+@router.get("/contact/search", include_in_schema=False)
+async def contacts(
+    request: Request,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+    project_id: int,
+    phone: Annotated[list[str] | None, Query()] = None,
+    email: Annotated[list[str] | None, Query()] = None,
+    max_bot_id: str | None = None,
+    max_user_id: str | None = None,
+) -> JSONResponse:
+    filters = {
+        "phone": phone or [],
+        "email": email or [],
+        "max_bot_id": [max_bot_id] if max_bot_id is not None else [],
+        "max_user_id": [max_user_id] if max_user_id is not None else [],
+    }
+    if not any(filters.values()):
+        return request_not_valid_error()
+    if any(not item or item != item.strip() for values in filters.values() for item in values):
+        return request_not_valid_error()
+    if any(len(request.query_params.getlist(key)) > 1 for key in ("max_bot_id", "max_user_id")):
+        return request_not_valid_error()
+
+    params: list[tuple[str, str | int]] = [("project_id", project_id)]
+    for key, values in filters.items():
+        params.extend((key, value) for value in values)
+    try:
+        _ensure_provider_account(access, provider_account)
+        response = await provider.get("/contact/search", params=params)
+        result = [_serialize_contact(item, access.project_id) for item in _list_result(response)]
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
+
+
 @router.get("/contact/{contact_id}", include_in_schema=False)
 async def contact(
     contact_id: int,
@@ -275,6 +406,75 @@ async def contact(
             access.project_id,
             expected_contact_id=contact_id,
         )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
+
+
+@router.get("/view/{view_id}", include_in_schema=False)
+async def view(
+    view_id: str,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+) -> JSONResponse:
+    if not view_id or view_id != view_id.strip():
+        return request_not_valid_error()
+    try:
+        _ensure_provider_account(access, provider_account)
+        response = await provider.get(f"/view/{view_id}")
+        result = _serialize_view(
+            _object_result(response),
+            access.project_id,
+            expected_view_id=view_id,
+        )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
+
+
+@router.get("/task/{task_id}", include_in_schema=False)
+async def task(
+    task_id: int,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+) -> JSONResponse:
+    try:
+        _ensure_provider_account(access, provider_account)
+        response = await provider.get(f"/task/{task_id}")
+        result = _serialize_task(
+            _object_result(response),
+            access.project_id,
+            expected_task_id=task_id,
+        )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
+
+
+@router.get("/task/{project_id}/list", include_in_schema=False)
+async def tasks(
+    project_id: int,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+    offset: Annotated[int, Query(ge=0)] = 0,
+    limit: Annotated[int, Query(ge=1, le=100)] = 10,
+) -> JSONResponse:
+    try:
+        _ensure_provider_account(access, provider_account)
+        response = await provider.get(
+            f"/task/{project_id}/list",
+            params={"offset": offset, "limit": limit},
+        )
+        result = [_serialize_task(item, access.project_id) for item in _list_result(response)]
     except (ProviderObjectNotFound, ReadAccessDenied):
         return read_not_found_error()
     except ProviderError:

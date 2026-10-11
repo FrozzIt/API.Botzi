@@ -304,6 +304,34 @@ async def test_raw_list_read_response_is_supported() -> None:
 
 
 @pytest.mark.asyncio
+async def test_repeated_read_query_parameters_are_preserved() -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        assert request.url.params.multi_items() == [
+            ("project_id", "10001"),
+            ("phone", "70000000001"),
+            ("phone", "70000000002"),
+        ]
+        return httpx.Response(200, json={"status": "success", "result": []})
+
+    tokens = CallbackTokenManager()
+    tokens.current = ProviderToken("internal-token", "generation")
+    adapter = make_adapter(httpx.MockTransport(handler), RecordingQuota(), tokens)
+    try:
+        response = await adapter.get(
+            "/contact/search",
+            params=[
+                ("project_id", 10001),
+                ("phone", "70000000001"),
+                ("phone", "70000000002"),
+            ],
+        )
+    finally:
+        await adapter.aclose()
+
+    assert response == {"status": "success", "result": []}
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("code", [400, 404])
 async def test_read_not_found_is_neutral(code: int) -> None:
     marker = "raw-provider-not-found-secret"
