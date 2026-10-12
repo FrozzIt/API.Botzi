@@ -6,6 +6,7 @@ from fastapi import APIRouter, Depends, Query, Request
 from fastapi.responses import JSONResponse
 
 from proxy_api.auth.service import AuthenticatedSession
+from proxy_api.infrastructure import get_session_factory
 from proxy_api.projects.routes import (
     AuthenticatedSessionDependency,
     ProviderAccountDependency,
@@ -16,6 +17,14 @@ from proxy_api.provider import (
     ProviderError,
     ProviderObjectNotFound,
     ProviderProtocolError,
+)
+from proxy_api.reads.detail_ownership import (
+    DetailOwnership,
+    DetailOwnershipConflict,
+    DetailOwnershipStore,
+    DetailOwnershipUnavailable,
+    ProviderIdentifier,
+    VerifiedContact,
 )
 
 router = APIRouter()
@@ -70,6 +79,16 @@ async def get_project_scoped_session(
 ProjectScopedSessionDependency = Annotated[
     AuthenticatedSession,
     Depends(get_project_scoped_session),
+]
+
+
+def get_detail_ownership_store() -> DetailOwnershipStore:
+    return DetailOwnershipStore(get_session_factory())
+
+
+DetailOwnershipDependency = Annotated[
+    DetailOwnershipStore,
+    Depends(get_detail_ownership_store),
 ]
 
 
@@ -194,6 +213,22 @@ def _serialize_contact(
     for field in ("created_at", "name", "site", "profession"):
         _copy_optional_string(value, public_contact, field)
     return public_contact
+
+
+def _verified_contact(value: dict[str, object]) -> VerifiedContact:
+    details = value.get("details")
+    if not isinstance(details, list):
+        raise ProviderProtocolError("Provider response is invalid")
+    detail_ids: set[ProviderIdentifier] = set()
+    for detail in details:
+        if not isinstance(detail, dict):
+            raise ProviderProtocolError("Provider response is invalid")
+        detail_ids.add(_require_identifier(detail.get("id")))
+    return VerifiedContact(
+        contact_id=_require_identifier(value.get("id")),
+        project_id=_require_int(value.get("project_id")),
+        detail_ids=frozenset(detail_ids),
+    )
 
 
 def _serialize_view(
@@ -326,12 +361,56 @@ def _ensure_provider_account(
         raise ProviderError("Provider account is unavailable")
 
 
+async def verify_contact_detail_parent(
+    detail_id: ProviderIdentifier,
+    access: AuthenticatedSession,
+    provider: ProviderDependency,
+    provider_account: str,
+    ownership_store: DetailOwnershipStore,
+    *,
+    expected_contact_id: ProviderIdentifier | None = None,
+) -> DetailOwnership:
+    _ensure_provider_account(access, provider_account)
+    try:
+        ownership = await ownership_store.get(provider_account, detail_id)
+    except DetailOwnershipConflict:
+        raise ReadAccessDenied from None
+    if ownership is None or ownership.project_id != access.project_id:
+        raise ReadAccessDenied
+    if expected_contact_id is not None and not _identifiers_match(
+        ownership.contact_id,
+        expected_contact_id,
+    ):
+        raise ReadAccessDenied
+
+    try:
+        response = await provider.get(f"/contact/{ownership.contact_id}")
+        contact = _serialize_contact(
+            _object_result(response),
+            access.project_id,
+            expected_contact_id=ownership.contact_id,
+        )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        await ownership_store.invalidate_if_matches(ownership)
+        raise ReadAccessDenied from None
+
+    verified_contact = _verified_contact(contact)
+    verified_detail_ids = {str(item) for item in verified_contact.detail_ids}
+    if ownership.detail_id not in verified_detail_ids:
+        await ownership_store.invalidate_if_matches(ownership)
+        raise ReadAccessDenied
+    if not await ownership_store.is_current(ownership):
+        raise ReadAccessDenied
+    return ownership
+
+
 @router.get("/contact/search", include_in_schema=False)
 async def contacts(
     request: Request,
     access: ProjectScopedSessionDependency,
     provider: ProviderDependency,
     provider_account: ProviderAccountDependency,
+    ownership_store: DetailOwnershipDependency,
     project_id: int,
     phone: Annotated[list[str] | None, Query()] = None,
     email: Annotated[list[str] | None, Query()] = None,
@@ -358,9 +437,15 @@ async def contacts(
         _ensure_provider_account(access, provider_account)
         response = await provider.get("/contact/search", params=params)
         result = [_serialize_contact(item, access.project_id) for item in _list_result(response)]
+        await ownership_store.sync_verified_contacts(
+            access.provider_account,
+            [_verified_contact(item) for item in result],
+        )
     except (ProviderObjectNotFound, ReadAccessDenied):
         return read_not_found_error()
-    except ProviderError:
+    except DetailOwnershipConflict:
+        return read_not_found_error()
+    except (ProviderError, DetailOwnershipUnavailable):
         return provider_unavailable_error()
     return JSONResponse({"status": "success", "result": result})
 
@@ -371,6 +456,7 @@ async def contact(
     access: ProjectScopedSessionDependency,
     provider: ProviderDependency,
     provider_account: ProviderAccountDependency,
+    ownership_store: DetailOwnershipDependency,
 ) -> JSONResponse:
     try:
         _ensure_provider_account(access, provider_account)
@@ -380,9 +466,15 @@ async def contact(
             access.project_id,
             expected_contact_id=contact_id,
         )
+        await ownership_store.sync_verified_contacts(
+            access.provider_account,
+            [_verified_contact(result)],
+        )
     except (ProviderObjectNotFound, ReadAccessDenied):
         return read_not_found_error()
-    except ProviderError:
+    except DetailOwnershipConflict:
+        return read_not_found_error()
+    except (ProviderError, DetailOwnershipUnavailable):
         return provider_unavailable_error()
     return JSONResponse({"status": "success", "result": result})
 
@@ -462,6 +554,7 @@ async def lead(
     access: ProjectScopedSessionDependency,
     provider: ProviderDependency,
     provider_account: ProviderAccountDependency,
+    ownership_store: DetailOwnershipDependency,
 ) -> JSONResponse:
     try:
         _ensure_provider_account(access, provider_account)
@@ -471,9 +564,18 @@ async def lead(
             access.project_id,
             expected_lead_id=lead_id,
         )
+        contact_result = result.get("contact")
+        if not isinstance(contact_result, dict):
+            raise ProviderProtocolError("Provider response is invalid")
+        await ownership_store.sync_verified_contacts(
+            access.provider_account,
+            [_verified_contact(contact_result)],
+        )
     except (ProviderObjectNotFound, ReadAccessDenied):
         return read_not_found_error()
-    except ProviderError:
+    except DetailOwnershipConflict:
+        return read_not_found_error()
+    except (ProviderError, DetailOwnershipUnavailable):
         return provider_unavailable_error()
     return JSONResponse({"status": "success", "result": result})
 
@@ -484,6 +586,7 @@ async def leads(
     access: ProjectScopedSessionDependency,
     provider: ProviderDependency,
     provider_account: ProviderAccountDependency,
+    ownership_store: DetailOwnershipDependency,
     offset: Annotated[int, Query(ge=0)] = 0,
     limit: Annotated[int, Query(ge=1, le=100)] = 10,
 ) -> JSONResponse:
@@ -494,8 +597,20 @@ async def leads(
             params={"offset": offset, "limit": limit},
         )
         result = [_serialize_lead(item, access.project_id) for item in _list_result(response)]
+        verified_contacts: list[VerifiedContact] = []
+        for item in result:
+            contact_result = item.get("contact")
+            if not isinstance(contact_result, dict):
+                raise ProviderProtocolError("Provider response is invalid")
+            verified_contacts.append(_verified_contact(contact_result))
+        await ownership_store.sync_verified_contacts(
+            access.provider_account,
+            verified_contacts,
+        )
     except (ProviderObjectNotFound, ReadAccessDenied):
         return read_not_found_error()
-    except ProviderError:
+    except DetailOwnershipConflict:
+        return read_not_found_error()
+    except (ProviderError, DetailOwnershipUnavailable):
         return provider_unavailable_error()
     return JSONResponse({"status": "success", "result": result})

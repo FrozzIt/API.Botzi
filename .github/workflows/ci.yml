@@ -78,7 +78,7 @@ jobs:
         run: |
           docker compose up --build --wait
           test "$(curl --fail --silent http://127.0.0.1:8000/health)" = '{"status":"ok"}'
-          test "$(docker compose exec -T postgres psql -U proxyapi -d proxyapi -Atc 'select version_num from alembic_version')" = "20260929_0002"
+          test "$(docker compose exec -T postgres psql -U proxyapi -d proxyapi -Atc 'select version_num from alembic_version')" = "20261012_0003"
 
       - name: Stop Docker stack
         if: always()
