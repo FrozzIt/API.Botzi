@@ -3,7 +3,16 @@ from __future__ import annotations
 import uuid
 from datetime import datetime
 
-from sqlalchemy import BigInteger, Boolean, DateTime, ForeignKey, Integer, LargeBinary, String
+from sqlalchemy import (
+    BigInteger,
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Index,
+    Integer,
+    LargeBinary,
+    String,
+)
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
 from sqlalchemy.sql import func
@@ -65,3 +74,26 @@ class AuthSession(Base):
         nullable=False,
     )
     revoked_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True), nullable=True)
+
+
+class ContactDetailOwnership(Base):
+    __tablename__ = "contact_detail_ownership"
+    __table_args__ = (
+        Index(
+            "ix_contact_detail_ownership_parent",
+            "provider_account",
+            "project_id",
+            "contact_id",
+        ),
+    )
+
+    provider_account: Mapped[str] = mapped_column(String(64), primary_key=True)
+    detail_id: Mapped[str] = mapped_column(String(128), primary_key=True)
+    contact_id: Mapped[str] = mapped_column(String(128), nullable=False)
+    project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
+    verified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )

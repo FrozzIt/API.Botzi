@@ -2,6 +2,8 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
+from datetime import UTC, datetime
 
 import pytest
 from fastapi import FastAPI
@@ -13,6 +15,18 @@ from proxy_api.infrastructure import get_provider_adapter
 from proxy_api.main import create_app
 from proxy_api.projects.routes import get_configured_provider_account
 from proxy_api.provider import ProviderObjectNotFound, ProviderUnavailable
+from proxy_api.reads.detail_ownership import (
+    DetailOwnership,
+    DetailOwnershipConflict,
+    DetailOwnershipUnavailable,
+    VerifiedContact,
+    normalize_identifier,
+)
+from proxy_api.reads.routes import (
+    ReadAccessDenied,
+    get_detail_ownership_store,
+    verify_contact_detail_parent,
+)
 
 
 @asynccontextmanager
@@ -171,14 +185,91 @@ class FakeProvider:
             raise ProviderObjectNotFound("private provider detail") from None
 
 
+class FakeDetailOwnershipStore:
+    def __init__(self) -> None:
+        self.sync_calls: list[tuple[str, list[VerifiedContact]]] = []
+        self.mappings: dict[tuple[str, str], DetailOwnership] = {}
+        self.error: Exception | None = None
+
+    async def sync_verified_contacts(
+        self,
+        provider_account: str,
+        contacts: list[VerifiedContact],
+    ) -> None:
+        if self.error is not None:
+            raise self.error
+        pending: dict[tuple[str, str], DetailOwnership] = {}
+        for contact in contacts:
+            contact_id = normalize_identifier(contact.contact_id)
+            for raw_detail_id in contact.detail_ids:
+                detail_id = normalize_identifier(raw_detail_id)
+                key = (provider_account, detail_id)
+                ownership = DetailOwnership(
+                    provider_account=provider_account,
+                    detail_id=detail_id,
+                    contact_id=contact_id,
+                    project_id=contact.project_id,
+                    active=True,
+                    verified_at=datetime.now(UTC),
+                )
+                existing = self.mappings.get(key) or pending.get(key)
+                if existing is not None and (
+                    existing.contact_id != ownership.contact_id
+                    or existing.project_id != ownership.project_id
+                ):
+                    raise DetailOwnershipConflict("synthetic conflict")
+                pending[key] = ownership
+        self.sync_calls.append((provider_account, contacts))
+        self.mappings.update(pending)
+
+    async def get(self, provider_account: str, detail_id: int | str) -> DetailOwnership | None:
+        if self.error is not None:
+            raise self.error
+        return self.mappings.get((provider_account, normalize_identifier(detail_id)))
+
+    async def invalidate_if_matches(self, ownership: DetailOwnership) -> None:
+        if self.error is not None:
+            raise self.error
+        key = (ownership.provider_account, ownership.detail_id)
+        if self.mappings.get(key) == ownership:
+            self.mappings[key] = replace(ownership, active=False)
+
+    async def is_current(self, ownership: DetailOwnership) -> bool:
+        if self.error is not None:
+            raise self.error
+        return self.mappings.get((ownership.provider_account, ownership.detail_id)) == ownership
+
+    def add(
+        self,
+        *,
+        provider_account: str = "primary",
+        detail_id: int | str = 20101,
+        contact_id: int | str = 20001,
+        project_id: int = 10001,
+        active: bool = True,
+    ) -> DetailOwnership:
+        ownership = DetailOwnership(
+            provider_account=provider_account,
+            detail_id=normalize_identifier(detail_id),
+            contact_id=normalize_identifier(contact_id),
+            project_id=project_id,
+            active=active,
+            verified_at=datetime.now(UTC),
+        )
+        self.mappings[(provider_account, ownership.detail_id)] = ownership
+        return ownership
+
+
 def make_client() -> tuple[TestClient, FakeProvider]:
     application = create_app()
     application.router.lifespan_context = no_op_lifespan
     auth = FakeAuthService()
     provider = FakeProvider()
+    provider.ownership_store = FakeDetailOwnershipStore()
     application.dependency_overrides[get_auth_service] = lambda: auth
     application.dependency_overrides[get_provider_adapter] = lambda: provider
     application.dependency_overrides[get_configured_provider_account] = lambda: "primary"
+    application.dependency_overrides[get_detail_ownership_store] = lambda: provider.ownership_store
     return TestClient(application), provider
 
 
@@ -234,6 +325,108 @@ def test_two_clients_receive_only_owned_lead_lists() -> None:
         ("/lead/10001/list", {"offset": 0, "limit": 10}),
         ("/lead/10002/list", {"offset": 0, "limit": 10}),
     ]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/contact/20001",
+        "/contact/search?project_id=10001&phone=70000000001",
+        "/lead/30001",
+        "/lead/10001/list",
+    ],
+)
+def test_verified_contact_reads_register_detail_ownership(path: str) -> None:
+    client, provider = make_client()
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json()["status"] == "success"
+    assert len(provider.ownership_store.sync_calls) == 1
+    provider_account, contacts = provider.ownership_store.sync_calls[0]
+    assert provider_account == "primary"
+    assert contacts == [
+        VerifiedContact(
+            contact_id=20001,
+            project_id=10001,
+            detail_ids=frozenset({20101}),
+            details_complete=path == "/contact/20001",
+        )
+    ]
+
+
+def test_contact_without_details_is_not_treated_as_complete_for_index() -> None:
+    client, provider = make_client()
+    response = provider.responses["/contact/20001"]
+    assert isinstance(response, dict)
+    contact = response["result"]
+    assert isinstance(contact, dict)
+    contact.pop("details")
+
+    with client:
+        result = client.get("/contact/20001", headers={"token": "token-a"})
+
+    assert result.json()["status"] == "success"
+    assert provider.ownership_store.sync_calls == [
+        (
+            "primary",
+            [
+                VerifiedContact(
+                    contact_id=20001,
+                    project_id=10001,
+                    detail_ids=frozenset(),
+                    details_complete=False,
+                )
+            ],
+        )
+    ]
+
+
+def test_rejected_mixed_lead_list_does_not_partially_register_details() -> None:
+    client, provider = make_client()
+    response = provider.responses["/lead/10001/list"]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, list)
+    result.append(lead_payload(10002, 30002, 20002))
+
+    with client:
+        response = client.get("/lead/10001/list", headers={"token": "token-a"})
+
+    assert response.json() == not_found()
+    assert provider.ownership_store.sync_calls == []
+    assert provider.ownership_store.mappings == {}
+
+
+@pytest.mark.parametrize("path", ["/contact/20001", "/lead/30001"])
+def test_ownership_store_failure_closes_verified_contact_reads(path: str) -> None:
+    client, provider = make_client()
+    provider.ownership_store.error = DetailOwnershipUnavailable("private database detail")
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 503, "message": "Service unavailable"}],
+    }
+    assert "database" not in response.text
+
+
+def test_conflicting_detail_mapping_closes_contact_read_without_rebinding() -> None:
+    client, provider = make_client()
+    existing = provider.ownership_store.add(
+        detail_id=20101,
+        contact_id=20002,
+        project_id=10002,
+    )
+
+    with client:
+        response = client.get("/contact/20001", headers={"token": "token-a"})
+
+    assert response.json() == not_found()
+    assert provider.ownership_store.mappings[("primary", "20101")] == existing
 
 
 @pytest.mark.parametrize(
@@ -709,6 +902,7 @@ def test_invalid_client_token_does_not_call_or_initialize_provider(path: str) ->
 
     application.dependency_overrides[get_provider_adapter] = provider_dependency
     application.dependency_overrides[get_configured_provider_account] = lambda: "primary"
+    application.dependency_overrides[get_detail_ownership_store] = FakeDetailOwnershipStore
 
     with TestClient(application) as client:
         response = client.get(path, headers={"token": "invalid"})
@@ -788,3 +982,188 @@ def test_object_identifier_mismatch_is_neutral(
         response = client.get(path, headers={"token": "token-a"})
 
     assert response.json() == not_found()
+
+
+@pytest.mark.asyncio
+async def test_detail_guard_rechecks_parent_on_every_use() -> None:
+    provider = FakeProvider()
+    store = FakeDetailOwnershipStore()
+    expected = store.add()
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    first = await verify_contact_detail_parent(
+        20101,
+        access,
+        provider,  # type: ignore[arg-type]
+        "primary",
+        store,  # type: ignore[arg-type]
+    )
+    second = await verify_contact_detail_parent(
+        20101,
+        access,
+        provider,  # type: ignore[arg-type]
+        "primary",
+        store,  # type: ignore[arg-type]
+    )
+
+    assert first == expected
+    assert second == expected
+    assert provider.calls == [
+        ("/contact/20001", None),
+        ("/contact/20001", None),
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("case", ["unknown", "foreign", "claimed-parent"])
+async def test_detail_guard_rejects_untrusted_mapping_before_provider_call(case: str) -> None:
+    provider = FakeProvider()
+    store = FakeDetailOwnershipStore()
+    expected_contact_id: int | None = None
+    if case == "foreign":
+        store.add(detail_id=20101, contact_id=20002, project_id=10002)
+    elif case == "claimed-parent":
+        store.add()
+        expected_contact_id = 20099
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    with pytest.raises(ReadAccessDenied):
+        await verify_contact_detail_parent(
+            20101,
+            access,
+            provider,  # type: ignore[arg-type]
+            "primary",
+            store,  # type: ignore[arg-type]
+            expected_contact_id=expected_contact_id,
+        )
+
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_detail_guard_rejects_inactive_mapping_before_provider_call() -> None:
+    provider = FakeProvider()
+    store = FakeDetailOwnershipStore()
+    store.add(active=False)
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    with pytest.raises(ReadAccessDenied):
+        await verify_contact_detail_parent(
+            20101,
+            access,
+            provider,  # type: ignore[arg-type]
+            "primary",
+            store,  # type: ignore[arg-type]
+        )
+
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_detail_guard_rejects_incomplete_parent_without_invalidating_history() -> None:
+    provider = FakeProvider()
+    response = provider.responses["/contact/20001"]
+    assert isinstance(response, dict)
+    contact = response["result"]
+    assert isinstance(contact, dict)
+    contact.pop("details")
+    store = FakeDetailOwnershipStore()
+    expected = store.add()
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    with pytest.raises(ReadAccessDenied):
+        await verify_contact_detail_parent(
+            20101,
+            access,
+            provider,  # type: ignore[arg-type]
+            "primary",
+            store,  # type: ignore[arg-type]
+        )
+
+    assert provider.calls == [("/contact/20001", None)]
+    assert store.mappings[("primary", "20101")] == expected
+    assert all(not path.startswith("/contact/details/") for path, _ in provider.calls)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("stale_kind", ["detail-removed", "contact-moved", "contact-replaced"])
+async def test_detail_guard_invalidates_stale_mapping_without_detail_endpoint_call(
+    stale_kind: str,
+) -> None:
+    provider = FakeProvider()
+    response = provider.responses["/contact/20001"]
+    assert isinstance(response, dict)
+    contact = response["result"]
+    assert isinstance(contact, dict)
+    if stale_kind == "detail-removed":
+        contact["details"] = []
+    elif stale_kind == "contact-moved":
+        contact["project_id"] = 10002
+    else:
+        contact["id"] = 20099
+    store = FakeDetailOwnershipStore()
+    store.add()
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    with pytest.raises(ReadAccessDenied):
+        await verify_contact_detail_parent(
+            20101,
+            access,
+            provider,  # type: ignore[arg-type]
+            "primary",
+            store,  # type: ignore[arg-type]
+        )
+
+    assert provider.calls == [("/contact/20001", None)]
+    assert store.mappings[("primary", "20101")].active is False
+    assert all(not path.startswith("/contact/details/") for path, _ in provider.calls)
+
+
+@pytest.mark.asyncio
+async def test_detail_guard_rejects_mapping_changed_during_parent_recheck() -> None:
+    class ChangingStore(FakeDetailOwnershipStore):
+        async def is_current(self, ownership: DetailOwnership) -> bool:
+            return False
+
+    provider = FakeProvider()
+    store = ChangingStore()
+    store.add()
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    with pytest.raises(ReadAccessDenied):
+        await verify_contact_detail_parent(
+            20101,
+            access,
+            provider,  # type: ignore[arg-type]
+            "primary",
+            store,  # type: ignore[arg-type]
+        )
+
+    assert provider.calls == [("/contact/20001", None)]
+    assert all(not path.startswith("/contact/details/") for path, _ in provider.calls)
+
+
+@pytest.mark.asyncio
+async def test_detail_guard_fails_closed_when_store_is_unavailable() -> None:
+    provider = FakeProvider()
+    store = FakeDetailOwnershipStore()
+    store.error = DetailOwnershipUnavailable("private database detail")
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    with pytest.raises(DetailOwnershipUnavailable):
+        await verify_contact_detail_parent(
+            20101,
+            access,
+            provider,  # type: ignore[arg-type]
+            "primary",
+            store,  # type: ignore[arg-type]
+        )
+
+    assert provider.calls == []
+
+
+def test_public_detail_routes_remain_closed() -> None:
+    application = create_app()
+    route_paths = {getattr(route, "path", None) for route in application.routes}
+
+    assert "/contact/details/{detail_id}" not in route_paths
