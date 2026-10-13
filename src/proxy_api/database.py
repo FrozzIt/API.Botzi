@@ -91,6 +91,7 @@ class ContactDetailOwnership(Base):
     detail_id: Mapped[str] = mapped_column(String(128), primary_key=True)
     contact_id: Mapped[str] = mapped_column(String(128), nullable=False)
     project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     verified_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

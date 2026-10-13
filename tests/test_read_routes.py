@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from collections.abc import AsyncIterator, Mapping, Sequence
 from contextlib import asynccontextmanager
+from dataclasses import replace
 from datetime import UTC, datetime
 
 import pytest
@@ -208,6 +209,7 @@ class FakeDetailOwnershipStore:
                     detail_id=detail_id,
                     contact_id=contact_id,
                     project_id=contact.project_id,
+                    active=True,
                     verified_at=datetime.now(UTC),
                 )
                 existing = self.mappings.get(key) or pending.get(key)
@@ -230,7 +232,7 @@ class FakeDetailOwnershipStore:
             raise self.error
         key = (ownership.provider_account, ownership.detail_id)
         if self.mappings.get(key) == ownership:
-            self.mappings.pop(key)
+            self.mappings[key] = replace(ownership, active=False)
 
     async def is_current(self, ownership: DetailOwnership) -> bool:
         if self.error is not None:
@@ -244,12 +246,14 @@ class FakeDetailOwnershipStore:
         detail_id: int | str = 20101,
         contact_id: int | str = 20001,
         project_id: int = 10001,
+        active: bool = True,
     ) -> DetailOwnership:
         ownership = DetailOwnership(
             provider_account=provider_account,
             detail_id=normalize_identifier(detail_id),
             contact_id=normalize_identifier(contact_id),
             project_id=project_id,
+            active=active,
             verified_at=datetime.now(UTC),
         )
         self.mappings[(provider_account, ownership.detail_id)] = ownership
@@ -347,6 +351,34 @@ def test_verified_contact_reads_register_detail_ownership(path: str) -> None:
             contact_id=20001,
             project_id=10001,
             detail_ids=frozenset({20101}),
+            details_complete=path == "/contact/20001",
+        )
+    ]
+
+
+def test_contact_without_details_is_not_treated_as_complete_for_index() -> None:
+    client, provider = make_client()
+    response = provider.responses["/contact/20001"]
+    assert isinstance(response, dict)
+    contact = response["result"]
+    assert isinstance(contact, dict)
+    contact.pop("details")
+
+    with client:
+        result = client.get("/contact/20001", headers={"token": "token-a"})
+
+    assert result.json()["status"] == "success"
+    assert provider.ownership_store.sync_calls == [
+        (
+            "primary",
+            [
+                VerifiedContact(
+                    contact_id=20001,
+                    project_id=10001,
+                    detail_ids=frozenset(),
+                    details_complete=False,
+                )
+            ],
         )
     ]
 
@@ -1009,6 +1041,51 @@ async def test_detail_guard_rejects_untrusted_mapping_before_provider_call(case:
 
 
 @pytest.mark.asyncio
+async def test_detail_guard_rejects_inactive_mapping_before_provider_call() -> None:
+    provider = FakeProvider()
+    store = FakeDetailOwnershipStore()
+    store.add(active=False)
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    with pytest.raises(ReadAccessDenied):
+        await verify_contact_detail_parent(
+            20101,
+            access,
+            provider,  # type: ignore[arg-type]
+            "primary",
+            store,  # type: ignore[arg-type]
+        )
+
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+async def test_detail_guard_rejects_incomplete_parent_without_invalidating_history() -> None:
+    provider = FakeProvider()
+    response = provider.responses["/contact/20001"]
+    assert isinstance(response, dict)
+    contact = response["result"]
+    assert isinstance(contact, dict)
+    contact.pop("details")
+    store = FakeDetailOwnershipStore()
+    expected = store.add()
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    with pytest.raises(ReadAccessDenied):
+        await verify_contact_detail_parent(
+            20101,
+            access,
+            provider,  # type: ignore[arg-type]
+            "primary",
+            store,  # type: ignore[arg-type]
+        )
+
+    assert provider.calls == [("/contact/20001", None)]
+    assert store.mappings[("primary", "20101")] == expected
+    assert all(not path.startswith("/contact/details/") for path, _ in provider.calls)
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize("stale_kind", ["detail-removed", "contact-moved", "contact-replaced"])
 async def test_detail_guard_invalidates_stale_mapping_without_detail_endpoint_call(
     stale_kind: str,
@@ -1038,7 +1115,7 @@ async def test_detail_guard_invalidates_stale_mapping_without_detail_endpoint_ca
         )
 
     assert provider.calls == [("/contact/20001", None)]
-    assert store.mappings == {}
+    assert store.mappings[("primary", "20101")].active is False
     assert all(not path.startswith("/contact/details/") for path, _ in provider.calls)
 
 

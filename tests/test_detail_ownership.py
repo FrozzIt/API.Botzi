@@ -10,6 +10,7 @@ def test_detail_ownership_table_stores_only_relation_metadata() -> None:
         "detail_id",
         "contact_id",
         "project_id",
+        "active",
         "verified_at",
     }
 

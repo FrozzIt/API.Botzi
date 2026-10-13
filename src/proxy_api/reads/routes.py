@@ -215,8 +215,19 @@ def _serialize_contact(
     return public_contact
 
 
-def _verified_contact(value: dict[str, object]) -> VerifiedContact:
-    details = value.get("details")
+def _verified_contact(
+    value: object,
+    *,
+    details_complete: bool,
+) -> VerifiedContact:
+    if not isinstance(value, dict):
+        raise ProviderProtocolError("Provider response is invalid")
+    if "details" not in value:
+        if details_complete:
+            raise ProviderProtocolError("Provider response is incomplete")
+        details: object = []
+    else:
+        details = value["details"]
     if not isinstance(details, list):
         raise ProviderProtocolError("Provider response is invalid")
     detail_ids: set[ProviderIdentifier] = set()
@@ -228,6 +239,7 @@ def _verified_contact(value: dict[str, object]) -> VerifiedContact:
         contact_id=_require_identifier(value.get("id")),
         project_id=_require_int(value.get("project_id")),
         detail_ids=frozenset(detail_ids),
+        details_complete=details_complete,
     )
 
 
@@ -375,7 +387,7 @@ async def verify_contact_detail_parent(
         ownership = await ownership_store.get(provider_account, detail_id)
     except DetailOwnershipConflict:
         raise ReadAccessDenied from None
-    if ownership is None or ownership.project_id != access.project_id:
+    if ownership is None or not ownership.active or ownership.project_id != access.project_id:
         raise ReadAccessDenied
     if expected_contact_id is not None and not _identifiers_match(
         ownership.contact_id,
@@ -385,16 +397,22 @@ async def verify_contact_detail_parent(
 
     try:
         response = await provider.get(f"/contact/{ownership.contact_id}")
-        contact = _serialize_contact(
-            _object_result(response),
+        raw_contact = _object_result(response)
+        _serialize_contact(
+            raw_contact,
             access.project_id,
             expected_contact_id=ownership.contact_id,
         )
     except (ProviderObjectNotFound, ReadAccessDenied):
         await ownership_store.invalidate_if_matches(ownership)
         raise ReadAccessDenied from None
+    except ProviderProtocolError:
+        raise ReadAccessDenied from None
 
-    verified_contact = _verified_contact(contact)
+    try:
+        verified_contact = _verified_contact(raw_contact, details_complete=True)
+    except ProviderProtocolError:
+        raise ReadAccessDenied from None
     verified_detail_ids = {str(item) for item in verified_contact.detail_ids}
     if ownership.detail_id not in verified_detail_ids:
         await ownership_store.invalidate_if_matches(ownership)
@@ -436,10 +454,11 @@ async def contacts(
     try:
         _ensure_provider_account(access, provider_account)
         response = await provider.get("/contact/search", params=params)
-        result = [_serialize_contact(item, access.project_id) for item in _list_result(response)]
+        raw_contacts = _list_result(response)
+        result = [_serialize_contact(item, access.project_id) for item in raw_contacts]
         await ownership_store.sync_verified_contacts(
             access.provider_account,
-            [_verified_contact(item) for item in result],
+            [_verified_contact(item, details_complete=False) for item in raw_contacts],
         )
     except (ProviderObjectNotFound, ReadAccessDenied):
         return read_not_found_error()
@@ -461,14 +480,20 @@ async def contact(
     try:
         _ensure_provider_account(access, provider_account)
         response = await provider.get(f"/contact/{contact_id}")
+        raw_contact = _object_result(response)
         result = _serialize_contact(
-            _object_result(response),
+            raw_contact,
             access.project_id,
             expected_contact_id=contact_id,
         )
         await ownership_store.sync_verified_contacts(
             access.provider_account,
-            [_verified_contact(result)],
+            [
+                _verified_contact(
+                    raw_contact,
+                    details_complete=isinstance(raw_contact, dict) and "details" in raw_contact,
+                )
+            ],
         )
     except (ProviderObjectNotFound, ReadAccessDenied):
         return read_not_found_error()
@@ -559,17 +584,18 @@ async def lead(
     try:
         _ensure_provider_account(access, provider_account)
         response = await provider.get(f"/lead/{lead_id}")
+        raw_lead = _object_result(response)
         result = _serialize_lead(
-            _object_result(response),
+            raw_lead,
             access.project_id,
             expected_lead_id=lead_id,
         )
-        contact_result = result.get("contact")
-        if not isinstance(contact_result, dict):
+        if not isinstance(raw_lead, dict):
             raise ProviderProtocolError("Provider response is invalid")
+        contact_result = raw_lead.get("contact")
         await ownership_store.sync_verified_contacts(
             access.provider_account,
-            [_verified_contact(contact_result)],
+            [_verified_contact(contact_result, details_complete=False)],
         )
     except (ProviderObjectNotFound, ReadAccessDenied):
         return read_not_found_error()
@@ -596,13 +622,13 @@ async def leads(
             f"/lead/{project_id}/list",
             params={"offset": offset, "limit": limit},
         )
-        result = [_serialize_lead(item, access.project_id) for item in _list_result(response)]
+        raw_leads = _list_result(response)
+        result = [_serialize_lead(item, access.project_id) for item in raw_leads]
         verified_contacts: list[VerifiedContact] = []
-        for item in result:
-            contact_result = item.get("contact")
-            if not isinstance(contact_result, dict):
+        for item in raw_leads:
+            if not isinstance(item, dict):
                 raise ProviderProtocolError("Provider response is invalid")
-            verified_contacts.append(_verified_contact(contact_result))
+            verified_contacts.append(_verified_contact(item.get("contact"), details_complete=False))
         await ownership_store.sync_verified_contacts(
             access.provider_account,
             verified_contacts,

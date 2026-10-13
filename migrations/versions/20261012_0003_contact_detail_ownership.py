@@ -24,6 +24,12 @@ def upgrade() -> None:
         sa.Column("contact_id", sa.String(length=128), nullable=False),
         sa.Column("project_id", sa.BigInteger(), nullable=False),
         sa.Column(
+            "active",
+            sa.Boolean(),
+            server_default=sa.true(),
+            nullable=False,
+        ),
+        sa.Column(
             "verified_at",
             sa.DateTime(timezone=True),
             server_default=sa.func.now(),
