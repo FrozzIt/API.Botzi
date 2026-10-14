@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Annotated
 
 from fastapi import APIRouter, Depends, Query, Request
@@ -116,6 +117,12 @@ def _require_string(value: object) -> str:
     return value
 
 
+def _require_bool(value: object) -> bool:
+    if type(value) is not bool:
+        raise ProviderProtocolError("Provider response is invalid")
+    return value
+
+
 def _validate_project_links(value: object, expected_project_id: int) -> None:
     if isinstance(value, dict):
         for key, nested in value.items():
@@ -213,6 +220,58 @@ def _serialize_contact(
     for field in ("created_at", "name", "site", "profession"):
         _copy_optional_string(value, public_contact, field)
     return public_contact
+
+
+def _serialize_project_field(
+    value: object,
+    expected_project_id: int,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ProviderProtocolError("Provider response is invalid")
+    _validate_project_links(value, expected_project_id)
+    return {
+        "id": _require_identifier(value.get("id")),
+        "name": _require_string(value.get("name")),
+        "type": _require_string(value.get("type")),
+    }
+
+
+def _serialize_funnel_step(
+    value: object,
+    expected_project_id: int,
+    *,
+    expected_funnel_id: ProviderIdentifier | None = None,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ProviderProtocolError("Provider response is invalid")
+    _validate_project_links(value, expected_project_id)
+    funnel_id = _require_identifier(value.get("id"))
+    if expected_funnel_id is not None and not _identifiers_match(
+        funnel_id,
+        expected_funnel_id,
+    ):
+        raise ReadAccessDenied
+    return {
+        "id": funnel_id,
+        "name": _require_string(value.get("name")),
+        "notify": _require_bool(value.get("notify")),
+        "in_leads": _require_bool(value.get("in_leads")),
+        "in_deals": _require_bool(value.get("in_deals")),
+    }
+
+
+def _serialize_label(
+    value: object,
+    expected_project_id: int,
+) -> dict[str, object]:
+    if not isinstance(value, dict):
+        raise ProviderProtocolError("Provider response is invalid")
+    _validate_project_links(value, expected_project_id)
+    return {
+        "id": _require_identifier(value.get("id")),
+        "name": _require_string(value.get("name")),
+        "color": _require_string(value.get("color")),
+    }
 
 
 def _verified_contact(
@@ -365,12 +424,111 @@ def _list_result(response: object) -> list[object]:
     return result
 
 
+CatalogSerializer = Callable[[object, int], dict[str, object]]
+
+
+async def _load_project_catalog(
+    provider: ProviderDependency,
+    path: str,
+    project_id: int,
+    serializer: CatalogSerializer,
+) -> list[dict[str, object]]:
+    response = await provider.get(path)
+    _validate_project_links(response, project_id)
+    result = _object_result(response)
+    if not isinstance(result, list):
+        raise ProviderProtocolError("Provider response is invalid")
+    serialized = [serializer(item, project_id) for item in result]
+    identifiers = [str(_require_identifier(item.get("id"))) for item in serialized]
+    if len(identifiers) != len(set(identifiers)):
+        raise ProviderProtocolError("Provider response is invalid")
+    return serialized
+
+
+def _require_catalog_member(
+    items: list[dict[str, object]],
+    expected_id: ProviderIdentifier,
+) -> dict[str, object]:
+    matches = [
+        item
+        for item in items
+        if _identifiers_match(_require_identifier(item.get("id")), expected_id)
+    ]
+    if len(matches) != 1:
+        raise ReadAccessDenied
+    return matches[0]
+
+
 def _ensure_provider_account(
     access: AuthenticatedSession,
     provider_account: str,
 ) -> None:
     if access.provider_account != provider_account:
         raise ProviderError("Provider account is unavailable")
+
+
+async def verify_project_custom_id(
+    custom_id: ProviderIdentifier,
+    access: AuthenticatedSession,
+    provider: ProviderDependency,
+    provider_account: str,
+) -> dict[str, object]:
+    _ensure_provider_account(access, provider_account)
+    items = await _load_project_catalog(
+        provider,
+        f"/project/{access.project_id}/customs",
+        access.project_id,
+        _serialize_project_field,
+    )
+    return _require_catalog_member(items, custom_id)
+
+
+async def verify_project_field_id(
+    field_id: ProviderIdentifier,
+    access: AuthenticatedSession,
+    provider: ProviderDependency,
+    provider_account: str,
+) -> dict[str, object]:
+    _ensure_provider_account(access, provider_account)
+    items = await _load_project_catalog(
+        provider,
+        f"/project/{access.project_id}/fields",
+        access.project_id,
+        _serialize_project_field,
+    )
+    return _require_catalog_member(items, field_id)
+
+
+async def verify_project_funnel_id(
+    funnel_id: ProviderIdentifier,
+    access: AuthenticatedSession,
+    provider: ProviderDependency,
+    provider_account: str,
+) -> dict[str, object]:
+    _ensure_provider_account(access, provider_account)
+    items = await _load_project_catalog(
+        provider,
+        f"/project/{access.project_id}/funnel",
+        access.project_id,
+        _serialize_funnel_step,
+    )
+    return _require_catalog_member(items, funnel_id)
+
+
+async def verify_project_label_id(
+    label_id: ProviderIdentifier,
+    access: AuthenticatedSession,
+    provider: ProviderDependency,
+    provider_account: str,
+) -> dict[str, object]:
+    _ensure_provider_account(access, provider_account)
+    items = await _load_project_catalog(
+        provider,
+        f"/label/{access.project_id}/list",
+        access.project_id,
+        _serialize_label,
+    )
+    return _require_catalog_member(items, label_id)
 
 
 async def verify_contact_detail_parent(
@@ -420,6 +578,123 @@ async def verify_contact_detail_parent(
     if not await ownership_store.is_current(ownership):
         raise ReadAccessDenied
     return ownership
+
+
+@router.get("/project/{project_id}/customs", include_in_schema=False)
+async def project_customs(
+    project_id: int,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+) -> JSONResponse:
+    try:
+        _ensure_provider_account(access, provider_account)
+        result = await _load_project_catalog(
+            provider,
+            f"/project/{access.project_id}/customs",
+            access.project_id,
+            _serialize_project_field,
+        )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
+
+
+@router.get("/project/{project_id}/fields", include_in_schema=False)
+async def project_fields(
+    project_id: int,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+) -> JSONResponse:
+    try:
+        _ensure_provider_account(access, provider_account)
+        result = await _load_project_catalog(
+            provider,
+            f"/project/{access.project_id}/fields",
+            access.project_id,
+            _serialize_project_field,
+        )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
+
+
+@router.get("/project/{project_id}/funnel", include_in_schema=False)
+async def project_funnel(
+    project_id: int,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+) -> JSONResponse:
+    try:
+        _ensure_provider_account(access, provider_account)
+        result = await _load_project_catalog(
+            provider,
+            f"/project/{access.project_id}/funnel",
+            access.project_id,
+            _serialize_funnel_step,
+        )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
+
+
+@router.get("/project/{project_id}/funnel/{funnel_id}", include_in_schema=False)
+async def project_funnel_step(
+    project_id: int,
+    funnel_id: int,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+) -> JSONResponse:
+    try:
+        await verify_project_funnel_id(
+            funnel_id,
+            access,
+            provider,
+            provider_account,
+        )
+        response = await provider.get(f"/project/{access.project_id}/funnel/{funnel_id}")
+        _validate_project_links(response, access.project_id)
+        result = _serialize_funnel_step(
+            _object_result(response),
+            access.project_id,
+            expected_funnel_id=funnel_id,
+        )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
+
+
+@router.get("/label/{project_id}/list", include_in_schema=False)
+async def project_labels(
+    project_id: int,
+    access: ProjectScopedSessionDependency,
+    provider: ProviderDependency,
+    provider_account: ProviderAccountDependency,
+) -> JSONResponse:
+    try:
+        _ensure_provider_account(access, provider_account)
+        result = await _load_project_catalog(
+            provider,
+            f"/label/{access.project_id}/list",
+            access.project_id,
+            _serialize_label,
+        )
+    except (ProviderObjectNotFound, ReadAccessDenied):
+        return read_not_found_error()
+    except ProviderError:
+        return provider_unavailable_error()
+    return JSONResponse({"status": "success", "result": result})
 
 
 @router.get("/contact/search", include_in_schema=False)

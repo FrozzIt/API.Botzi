@@ -26,6 +26,10 @@ from proxy_api.reads.routes import (
     ReadAccessDenied,
     get_detail_ownership_store,
     verify_contact_detail_parent,
+    verify_project_custom_id,
+    verify_project_field_id,
+    verify_project_funnel_id,
+    verify_project_label_id,
 )
 
 
@@ -126,6 +130,35 @@ def task_payload(project_id: int, task_id: int, staff_id: int) -> dict[str, obje
     }
 
 
+def project_field_payload(field_id: int, field_type: str = "string") -> dict[str, object]:
+    return {
+        "id": field_id,
+        "name": f"Field {field_id}",
+        "type": field_type,
+        "internal": {"provider_only": True},
+    }
+
+
+def funnel_payload(funnel_id: int) -> dict[str, object]:
+    return {
+        "id": funnel_id,
+        "name": f"Funnel {funnel_id}",
+        "notify": False,
+        "in_leads": True,
+        "in_deals": False,
+        "internal": {"provider_only": True},
+    }
+
+
+def label_payload(label_id: int) -> dict[str, object]:
+    return {
+        "id": label_id,
+        "name": f"Label {label_id}",
+        "color": "F7F0C5",
+        "internal": {"provider_only": True},
+    }
+
+
 class FakeProvider:
     def __init__(self) -> None:
         contact_a = contact_payload(10001, 20001)
@@ -136,7 +169,31 @@ class FakeProvider:
         view_b = view_payload(10002, 40002)
         task_a = task_payload(10001, 50001, 60001)
         task_b = task_payload(10002, 50002, 60002)
+        custom_a = project_field_payload(70001, "text")
+        custom_b = project_field_payload(70002, "date")
+        field_a = project_field_payload(71001, "string")
+        field_b = project_field_payload(71002, "number")
+        funnel_a = funnel_payload(72001)
+        funnel_b = funnel_payload(72002)
+        label_a = label_payload(73001)
+        label_b = label_payload(73002)
         self.responses: dict[str, object] = {
+            "/project/10001/customs": {"status": "success", "result": [custom_a]},
+            "/project/10002/customs": {"status": "success", "result": [custom_b]},
+            "/project/10001/fields": {"status": "success", "result": [field_a]},
+            "/project/10002/fields": {"status": "success", "result": [field_b]},
+            "/project/10001/funnel": {"status": "success", "result": [funnel_a]},
+            "/project/10002/funnel": {"status": "success", "result": [funnel_b]},
+            "/project/10001/funnel/72001": {
+                "status": "success",
+                "result": dict(funnel_a),
+            },
+            "/project/10002/funnel/72002": {
+                "status": "success",
+                "result": dict(funnel_b),
+            },
+            "/label/10001/list": {"status": "success", "result": [label_a]},
+            "/label/10002/list": {"status": "success", "result": [label_b]},
             "/contact/search:10001": {"status": "success", "result": [contact_a]},
             "/contact/search:10002": {"status": "success", "result": [contact_b]},
             "/contact/20001": {"status": "success", "result": contact_a},
@@ -278,6 +335,302 @@ def not_found() -> dict[str, object]:
         "status": "error",
         "errors": [{"code": 404, "message": "Object not found"}],
     }
+
+
+def unavailable() -> dict[str, object]:
+    return {
+        "status": "error",
+        "errors": [{"code": 503, "message": "Service unavailable"}],
+    }
+
+
+@pytest.mark.parametrize(
+    ("token", "path", "expected_id", "expected_calls"),
+    [
+        ("token-a", "/project/10001/customs", 70001, ["/project/10001/customs"]),
+        ("token-b", "/project/10002/customs", 70002, ["/project/10002/customs"]),
+        ("token-a", "/project/10001/fields", 71001, ["/project/10001/fields"]),
+        ("token-b", "/project/10002/fields", 71002, ["/project/10002/fields"]),
+        ("token-a", "/project/10001/funnel", 72001, ["/project/10001/funnel"]),
+        ("token-b", "/project/10002/funnel", 72002, ["/project/10002/funnel"]),
+        ("token-a", "/label/10001/list", 73001, ["/label/10001/list"]),
+        ("token-b", "/label/10002/list", 73002, ["/label/10002/list"]),
+        (
+            "token-a",
+            "/project/10001/funnel/72001",
+            72001,
+            ["/project/10001/funnel", "/project/10001/funnel/72001"],
+        ),
+        (
+            "token-b",
+            "/project/10002/funnel/72002",
+            72002,
+            ["/project/10002/funnel", "/project/10002/funnel/72002"],
+        ),
+    ],
+)
+def test_two_clients_receive_only_their_project_dictionaries(
+    token: str,
+    path: str,
+    expected_id: int,
+    expected_calls: list[str],
+) -> None:
+    client, provider = make_client()
+
+    with client:
+        response = client.get(path, headers={"token": token})
+
+    assert response.json()["status"] == "success"
+    raw_result = response.json()["result"]
+    item = raw_result[0] if isinstance(raw_result, list) else raw_result
+    assert item["id"] == expected_id
+    assert "internal" not in item
+    assert provider.calls == [(call, None) for call in expected_calls]
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/project/10002/customs",
+        "/project/10002/fields",
+        "/project/10002/funnel",
+        "/project/10002/funnel/72002",
+        "/label/10002/list",
+    ],
+)
+def test_foreign_project_dictionary_path_is_rejected_before_provider(path: str) -> None:
+    client, provider = make_client()
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json() == not_found()
+    assert provider.calls == []
+
+
+def test_funnel_detail_requires_membership_before_detail_call() -> None:
+    client, provider = make_client()
+
+    with client:
+        response = client.get(
+            "/project/10001/funnel/72002",
+            headers={"token": "token-a"},
+        )
+
+    assert response.json() == not_found()
+    assert provider.calls == [("/project/10001/funnel", None)]
+
+
+def test_funnel_detail_rejects_mismatched_direct_response() -> None:
+    client, provider = make_client()
+    response = provider.responses["/project/10001/funnel/72001"]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, dict)
+    result["id"] = 72099
+
+    with client:
+        result_response = client.get(
+            "/project/10001/funnel/72001",
+            headers={"token": "token-a"},
+        )
+
+    assert result_response.json() == not_found()
+    assert provider.calls == [
+        ("/project/10001/funnel", None),
+        ("/project/10001/funnel/72001", None),
+    ]
+
+
+def test_funnel_detail_validates_every_membership_list_item_before_detail_call() -> None:
+    client, provider = make_client()
+    response = provider.responses["/project/10001/funnel"]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, list)
+    result.append(
+        {
+            **funnel_payload(72099),
+            "nested": {"project_id": 10002},
+        }
+    )
+
+    with client:
+        result_response = client.get(
+            "/project/10001/funnel/72001",
+            headers={"token": "token-a"},
+        )
+
+    assert result_response.json() == not_found()
+    assert provider.calls == [("/project/10001/funnel", None)]
+
+
+def test_funnel_detail_rejects_ambiguous_duplicate_membership_before_detail_call() -> None:
+    client, provider = make_client()
+    response = provider.responses["/project/10001/funnel"]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, list)
+    result.append(funnel_payload(72001))
+
+    with client:
+        result_response = client.get(
+            "/project/10001/funnel/72001",
+            headers={"token": "token-a"},
+        )
+
+    assert result_response.json() == unavailable()
+    assert provider.calls == [("/project/10001/funnel", None)]
+
+
+@pytest.mark.parametrize(
+    ("path", "response_key"),
+    [
+        ("/project/10001/customs", "/project/10001/customs"),
+        ("/project/10001/fields", "/project/10001/fields"),
+        ("/project/10001/funnel", "/project/10001/funnel"),
+        ("/label/10001/list", "/label/10001/list"),
+    ],
+)
+def test_dictionary_rejects_whole_list_on_nested_foreign_project_link(
+    path: str,
+    response_key: str,
+) -> None:
+    client, provider = make_client()
+    response = provider.responses[response_key]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, list)
+    result.append(
+        {
+            "id": 79999,
+            "name": "Foreign",
+            "type": "string",
+            "notify": False,
+            "in_leads": True,
+            "in_deals": False,
+            "color": "F7F0C5",
+            "nested": {"project_id": 10002},
+        }
+    )
+
+    with client:
+        result_response = client.get(path, headers={"token": "token-a"})
+
+    assert result_response.json() == not_found()
+    assert provider.calls == [(response_key, None)]
+
+
+@pytest.mark.parametrize(
+    ("path", "response_key", "field", "invalid_value"),
+    [
+        ("/project/10001/customs", "/project/10001/customs", "name", {"raw": "x"}),
+        ("/project/10001/fields", "/project/10001/fields", "type", ["string"]),
+        ("/project/10001/funnel", "/project/10001/funnel", "notify", 1),
+        ("/label/10001/list", "/label/10001/list", "color", 123),
+    ],
+)
+def test_dictionary_rejects_malformed_allowlisted_fields(
+    path: str,
+    response_key: str,
+    field: str,
+    invalid_value: object,
+) -> None:
+    client, provider = make_client()
+    response = provider.responses[response_key]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, list)
+    item = result[0]
+    assert isinstance(item, dict)
+    item[field] = invalid_value
+
+    with client:
+        result_response = client.get(path, headers={"token": "token-a"})
+
+    assert result_response.json() == unavailable()
+    assert "raw" not in result_response.text
+
+
+def test_label_list_accepts_live_object_envelope_not_documentation_outer_array() -> None:
+    client, provider = make_client()
+    provider.responses["/label/10001/list"] = [provider.responses["/label/10001/list"]]
+
+    with client:
+        response = client.get("/label/10001/list", headers={"token": "token-a"})
+
+    assert response.json() == unavailable()
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/project/10001/customs",
+        "/project/10001/fields",
+        "/project/10001/funnel",
+        "/project/10001/funnel/72001",
+        "/label/10001/list",
+    ],
+)
+def test_dictionary_provider_failure_is_neutral(path: str) -> None:
+    client, provider = make_client()
+    provider.error = ProviderUnavailable("private provider failure")
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json() == unavailable()
+    assert "private provider failure" not in response.text
+
+
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/project/10001/customs",
+        "/project/10001/fields",
+        "/project/10001/funnel",
+        "/project/10001/funnel/72001",
+        "/label/10001/list",
+    ],
+)
+def test_invalid_local_token_blocks_dictionary_provider_calls(path: str) -> None:
+    client, provider = make_client()
+
+    with client:
+        response = client.get(path, headers={"token": "invalid"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 401, "message": "Authentication failed"}],
+    }
+    assert provider.calls == []
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("guard", "own_id", "foreign_id", "expected_path"),
+    [
+        (verify_project_custom_id, 70001, 70002, "/project/10001/customs"),
+        (verify_project_field_id, 71001, 71002, "/project/10001/fields"),
+        (verify_project_funnel_id, 72001, 72002, "/project/10001/funnel"),
+        (verify_project_label_id, 73001, 73002, "/label/10001/list"),
+    ],
+)
+async def test_future_write_guards_require_membership_in_server_assigned_project(
+    guard: object,
+    own_id: int,
+    foreign_id: int,
+    expected_path: str,
+) -> None:
+    provider = FakeProvider()
+    access = AuthenticatedSession("session-a", "client-a", "primary", 10001)
+
+    owned = await guard(own_id, access, provider, "primary")  # type: ignore[operator]
+    with pytest.raises(ReadAccessDenied):
+        await guard(foreign_id, access, provider, "primary")  # type: ignore[operator]
+
+    assert owned["id"] == own_id
+    assert provider.calls == [(expected_path, None), (expected_path, None)]
 
 
 @pytest.mark.parametrize(
