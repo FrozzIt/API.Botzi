@@ -58,6 +58,69 @@ class RecordingProvider:
         params: Mapping[str, str | int] | None = None,
     ) -> dict[str, object]:
         self.calls.append(path)
+        if path.startswith("/project/") and path.endswith("/customs"):
+            project_id = int(path.split("/")[2])
+            return {
+                "status": "success",
+                "result": [
+                    {
+                        "id": project_id + 60000,
+                        "name": f"Custom {project_id}",
+                        "type": "text",
+                    }
+                ],
+            }
+        if path.startswith("/project/") and path.endswith("/fields"):
+            project_id = int(path.split("/")[2])
+            return {
+                "status": "success",
+                "result": [
+                    {
+                        "id": project_id + 61000,
+                        "name": f"Field {project_id}",
+                        "type": "string",
+                    }
+                ],
+            }
+        if path.startswith("/project/") and "/funnel/" in path:
+            project_id = int(path.split("/")[2])
+            funnel_id = int(path.rsplit("/", 1)[1])
+            return {
+                "status": "success",
+                "result": {
+                    "id": funnel_id,
+                    "name": f"Funnel {project_id}",
+                    "notify": False,
+                    "in_leads": True,
+                    "in_deals": False,
+                },
+            }
+        if path.startswith("/project/") and path.endswith("/funnel"):
+            project_id = int(path.split("/")[2])
+            return {
+                "status": "success",
+                "result": [
+                    {
+                        "id": project_id + 62000,
+                        "name": f"Funnel {project_id}",
+                        "notify": False,
+                        "in_leads": True,
+                        "in_deals": False,
+                    }
+                ],
+            }
+        if path.startswith("/label/") and path.endswith("/list"):
+            project_id = int(path.split("/")[2])
+            return {
+                "status": "success",
+                "result": [
+                    {
+                        "id": project_id + 63000,
+                        "name": f"Label {project_id}",
+                        "color": "F7F0C5",
+                    }
+                ],
+            }
         if path.startswith("/contact/"):
             contact_id = int(path.rsplit("/", 1)[1])
             project_id = 10001 if contact_id == 20001 else 10002
@@ -193,6 +256,37 @@ def test_login_own_project_and_logout_are_isolated() -> None:
                 client.get("/lead/10002/list", headers={"token": token_b}).json()["result"][0]["id"]
                 == 30002
             )
+            assert (
+                client.get("/project/10001/customs", headers={"token": token_a}).json()["result"][
+                    0
+                ]["id"]
+                == 70001
+            )
+            assert (
+                client.get("/project/10002/fields", headers={"token": token_b}).json()["result"][0][
+                    "id"
+                ]
+                == 71002
+            )
+            assert (
+                client.get("/project/10001/funnel", headers={"token": token_a}).json()["result"][0][
+                    "id"
+                ]
+                == 72001
+            )
+            assert (
+                client.get(
+                    "/project/10002/funnel/72002",
+                    headers={"token": token_b},
+                ).json()["result"]["id"]
+                == 72002
+            )
+            assert (
+                client.get("/label/10001/list", headers={"token": token_a}).json()["result"][0][
+                    "id"
+                ]
+                == 73001
+            )
 
             calls_before_rejections = list(provider.calls)
             assert client.get("/project/10002", headers={"token": token_a}).json() == {
@@ -200,6 +294,14 @@ def test_login_own_project_and_logout_are_isolated() -> None:
                 "errors": [{"code": 404, "message": "Project not found"}],
             }
             assert client.get("/projects", headers={"token": "invalid-token"}).json() == {
+                "status": "error",
+                "errors": [{"code": 401, "message": "Authentication failed"}],
+            }
+            assert client.get("/project/10002/funnel", headers={"token": token_a}).json() == {
+                "status": "error",
+                "errors": [{"code": 404, "message": "Object not found"}],
+            }
+            assert client.get("/label/10001/list", headers={"token": "invalid-token"}).json() == {
                 "status": "error",
                 "errors": [{"code": 401, "message": "Authentication failed"}],
             }
