@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import os
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 
 import pytest
 from fastapi.testclient import TestClient
@@ -14,6 +14,7 @@ from proxy_api.database import AuthClient, AuthSession, ConfigState
 from proxy_api.infrastructure import get_provider_adapter
 from proxy_api.main import create_app
 from proxy_api.projects.routes import get_configured_provider_account
+from proxy_api.provider.client import ProviderSendGuard
 
 pytestmark = pytest.mark.integration
 
@@ -55,8 +56,23 @@ class RecordingProvider:
         self,
         path: str,
         *,
-        params: Mapping[str, str | int] | None = None,
+        params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
+        deadline_seconds: float | None = None,
+        send_guard: ProviderSendGuard | None = None,
     ) -> dict[str, object]:
+        del deadline_seconds
+        if send_guard is not None:
+            async with send_guard():
+                return self._get(path, params=params)
+        return self._get(path, params=params)
+
+    def _get(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
+    ) -> dict[str, object]:
+        del params
         self.calls.append(path)
         if path.startswith("/project/") and path.endswith("/customs"):
             project_id = int(path.split("/")[2])
