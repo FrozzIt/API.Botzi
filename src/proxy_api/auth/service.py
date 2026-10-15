@@ -2,6 +2,9 @@ from __future__ import annotations
 
 import hashlib
 import secrets
+import uuid
+from collections.abc import AsyncIterator
+from contextlib import asynccontextmanager
 from dataclasses import dataclass
 from datetime import UTC, datetime, timedelta
 
@@ -140,6 +143,48 @@ class AuthService:
                     auth_session.revoked_at = now
                 raise AuthenticationFailed("Authentication failed")
             auth_session.revoked_at = now
+
+    @asynccontextmanager
+    async def provider_request_guard(
+        self,
+        access: AuthenticatedSession,
+    ) -> AsyncIterator[None]:
+        now = datetime.now(UTC)
+        try:
+            session_id = uuid.UUID(access.session_id)
+        except ValueError:
+            raise AuthenticationFailed("Authentication failed") from None
+
+        async with self._session_factory() as session, session.begin():
+            await self._lock_current_config_revision(session)
+            row = (
+                await session.execute(
+                    select(AuthSession, AuthClient)
+                    .join(AuthClient, AuthClient.client_key == AuthSession.client_key)
+                    .where(AuthSession.id == session_id)
+                    .with_for_update(read=True)
+                )
+            ).one_or_none()
+            if row is None:
+                raise AuthenticationFailed("Authentication failed")
+
+            auth_session, client = row
+            expired = auth_session.last_seen_at < now - self._idle_timeout
+            access_changed = (
+                auth_session.client_key != access.client_key
+                or client.client_key != access.client_key
+                or client.provider_account != access.provider_account
+                or client.project_id != access.project_id
+                or client.revision != self._expected_config_revision
+            )
+            if (
+                auth_session.revoked_at is not None
+                or expired
+                or not client.enabled
+                or access_changed
+            ):
+                raise AuthenticationFailed("Authentication failed")
+            yield
 
     async def _lock_current_config_revision(self, session: AsyncSession) -> None:
         state = await session.scalar(

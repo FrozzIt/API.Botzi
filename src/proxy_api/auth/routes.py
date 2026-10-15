@@ -3,6 +3,7 @@ from typing import Annotated
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, SecretStr
+from sqlalchemy.exc import SQLAlchemyError
 
 from proxy_api.auth.rate_limit import LoginAttemptLimiter, LoginAttemptRejected
 from proxy_api.auth.service import AuthenticationFailed, AuthService
@@ -72,7 +73,7 @@ async def login(
             service=payload.service,
             version=payload.version,
         )
-    except (AuthenticationFailed, LoginAttemptRejected):
+    except (AuthenticationFailed, LoginAttemptRejected, SQLAlchemyError):
         return authentication_error()
     return JSONResponse({"status": "success", "result": {"token": token}})
 
@@ -86,6 +87,6 @@ async def logout(
         return authentication_error()
     try:
         await auth_service.logout(token)
-    except AuthenticationFailed:
+    except (AuthenticationFailed, SQLAlchemyError):
         return authentication_error()
     return JSONResponse({"status": "success", "result": {}})

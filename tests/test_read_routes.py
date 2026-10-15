@@ -14,7 +14,8 @@ from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed
 from proxy_api.infrastructure import get_provider_adapter
 from proxy_api.main import create_app
 from proxy_api.projects.routes import get_configured_provider_account
-from proxy_api.provider import ProviderObjectNotFound, ProviderUnavailable
+from proxy_api.provider import ProviderError, ProviderObjectNotFound, ProviderUnavailable
+from proxy_api.provider.client import ProviderSendGuard
 from proxy_api.reads.detail_ownership import (
     DetailOwnership,
     DetailOwnershipConflict,
@@ -38,6 +39,11 @@ async def no_op_lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+@asynccontextmanager
+async def allow_send() -> AsyncIterator[None]:
+    yield
+
+
 class FakeAuthService:
     def __init__(self) -> None:
         self.sessions = {
@@ -50,6 +56,19 @@ class FakeAuthService:
             return self.sessions[token]
         except KeyError:
             raise AuthenticationFailed("Authentication failed") from None
+
+    async def logout(self, token: str) -> None:
+        if self.sessions.pop(token, None) is None:
+            raise AuthenticationFailed("Authentication failed")
+
+    @asynccontextmanager
+    async def provider_request_guard(
+        self,
+        access: AuthenticatedSession,
+    ) -> AsyncIterator[None]:
+        if access not in self.sessions.values():
+            raise AuthenticationFailed("Authentication failed")
+        yield
 
 
 def contact_payload(project_id: int, contact_id: int) -> dict[str, object]:
@@ -223,23 +242,27 @@ class FakeProvider:
         path: str,
         *,
         params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
+        deadline_seconds: float | None = None,
+        send_guard: ProviderSendGuard | None = None,
     ) -> object:
-        self.calls.append((path, params))
-        if self.error is not None:
-            raise self.error
-        response_key = path
-        if path == "/contact/search":
-            assert params is not None
-            project_id = (
-                next(value for key, value in params.items() if key == "project_id")
-                if isinstance(params, Mapping)
-                else next(value for key, value in params if key == "project_id")
-            )
-            response_key = f"{path}:{project_id}"
-        try:
-            return self.responses[response_key]
-        except KeyError:
-            raise ProviderObjectNotFound("private provider detail") from None
+        del deadline_seconds
+        async with send_guard() if send_guard is not None else allow_send():
+            self.calls.append((path, params))
+            if self.error is not None:
+                raise self.error
+            response_key = path
+            if path == "/contact/search":
+                assert params is not None
+                project_id = (
+                    next(value for key, value in params.items() if key == "project_id")
+                    if isinstance(params, Mapping)
+                    else next(value for key, value in params if key == "project_id")
+                )
+                response_key = f"{path}:{project_id}"
+            try:
+                return self.responses[response_key]
+            except KeyError:
+                raise ProviderObjectNotFound("private provider detail") from None
 
 
 class FakeDetailOwnershipStore:
@@ -492,6 +515,35 @@ def test_funnel_detail_rejects_ambiguous_duplicate_membership_before_detail_call
         ("/label/10001/list", "/label/10001/list"),
     ],
 )
+def test_duplicate_dictionary_id_closes_whole_list(
+    path: str,
+    response_key: str,
+) -> None:
+    client, provider = make_client()
+    response = provider.responses[response_key]
+    assert isinstance(response, dict)
+    result = response["result"]
+    assert isinstance(result, list)
+    original = result[0]
+    assert isinstance(original, dict)
+    result.append(dict(original))
+
+    with client:
+        result_response = client.get(path, headers={"token": "token-a"})
+
+    assert result_response.json() == unavailable()
+    assert str(original["id"]) not in result_response.text
+
+
+@pytest.mark.parametrize(
+    ("path", "response_key"),
+    [
+        ("/project/10001/customs", "/project/10001/customs"),
+        ("/project/10001/fields", "/project/10001/fields"),
+        ("/project/10001/funnel", "/project/10001/funnel"),
+        ("/label/10001/list", "/label/10001/list"),
+    ],
+)
 def test_dictionary_rejects_whole_list_on_nested_foreign_project_link(
     path: str,
     response_key: str,
@@ -606,6 +658,74 @@ def test_invalid_local_token_blocks_dictionary_provider_calls(path: str) -> None
     assert provider.calls == []
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/project/10001/customs",
+        "/project/10001/fields",
+        "/project/10001/funnel",
+        "/project/10001/funnel/72001",
+        "/label/10001/list",
+        "/contact/search?project_id=10001&phone=70000000001",
+        "/contact/20001",
+        "/view/40001",
+        "/lead/30001",
+        "/lead/10001/list",
+        "/task/50001",
+        "/task/10001/list",
+    ],
+)
+def test_provider_account_mismatch_rejects_each_read_family_before_call(path: str) -> None:
+    client, provider = make_client()
+    auth = client.app.dependency_overrides[get_auth_service]()
+    assert isinstance(auth, FakeAuthService)
+    auth.sessions["token-a"] = AuthenticatedSession(
+        "session-a",
+        "client-a",
+        "secondary",
+        10001,
+    )
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json() == unavailable()
+    assert provider.calls == []
+
+
+@pytest.mark.parametrize(
+    ("revoked_path", "unaffected_path"),
+    [
+        ("/project/10001/customs", "/project/10002/customs"),
+        ("/contact/20001", "/contact/20002"),
+        ("/view/40001", "/view/40002"),
+        ("/lead/30001", "/lead/30002"),
+        ("/task/50001", "/task/50002"),
+    ],
+)
+def test_revoked_session_cannot_reach_provider_while_other_client_still_can(
+    revoked_path: str,
+    unaffected_path: str,
+) -> None:
+    client, provider = make_client()
+
+    with client:
+        assert client.post("/logout", headers={"token": "token-a"}).json() == {
+            "status": "success",
+            "result": {},
+        }
+        calls_before_rejection = list(provider.calls)
+        revoked = client.get(revoked_path, headers={"token": "token-a"})
+        assert provider.calls == calls_before_rejection
+        unaffected = client.get(unaffected_path, headers={"token": "token-b"})
+
+    assert revoked.json() == {
+        "status": "error",
+        "errors": [{"code": 401, "message": "Authentication failed"}],
+    }
+    assert unaffected.json()["status"] == "success"
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("guard", "own_id", "foreign_id", "expected_path"),
@@ -631,6 +751,28 @@ async def test_future_write_guards_require_membership_in_server_assigned_project
 
     assert owned["id"] == own_id
     assert provider.calls == [(expected_path, None), (expected_path, None)]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "guard",
+    [
+        verify_project_custom_id,
+        verify_project_field_id,
+        verify_project_funnel_id,
+        verify_project_label_id,
+    ],
+)
+async def test_future_write_guards_reject_provider_account_mismatch_before_call(
+    guard: object,
+) -> None:
+    provider = FakeProvider()
+    access = AuthenticatedSession("session-a", "client-a", "secondary", 10001)
+
+    with pytest.raises(ProviderError):
+        await guard(1, access, provider, "primary")  # type: ignore[operator]
+
+    assert provider.calls == []
 
 
 @pytest.mark.parametrize(
@@ -866,6 +1008,16 @@ def test_view_can_be_read_by_matching_uuid() -> None:
 @pytest.mark.parametrize(
     "path",
     [
+        "/project/10001/customs?project_id=10002",
+        "/project/10001/customs?project_id=10001&project_id=10001",
+        "/project/10001/fields?project_id=10002",
+        "/project/10001/fields?project_id=10001&project_id=10001",
+        "/project/10001/funnel?project_id=10002",
+        "/project/10001/funnel?project_id=10001&project_id=10001",
+        "/project/10001/funnel/72001?project_id=10002",
+        "/project/10001/funnel/72001?project_id=10001&project_id=10001",
+        "/label/10001/list?project_id=10002",
+        "/label/10001/list?project_id=10001&project_id=10001",
         "/contact/search?project_id=10002&phone=70000000001",
         "/contact/20001?project_id=10002",
         "/view/40001?project_id=10002",
