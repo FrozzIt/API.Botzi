@@ -1,7 +1,8 @@
 from typing import Annotated
 
-from fastapi import APIRouter, Depends, Header
+from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
+from sqlalchemy.exc import SQLAlchemyError
 
 from proxy_api.auth.routes import AuthServiceDependency
 from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed
@@ -33,7 +34,7 @@ async def get_authenticated_session(
         raise ClientAuthenticationError
     try:
         return await auth_service.authenticate(token)
-    except AuthenticationFailed:
+    except (AuthenticationFailed, SQLAlchemyError):
         raise ClientAuthenticationError from None
 
 
@@ -61,6 +62,36 @@ def provider_unavailable_error() -> JSONResponse:
     )
 
 
+def _validate_project_query(
+    request: Request,
+    expected_project_id: int | None,
+) -> None:
+    query_projects = request.query_params.getlist("project_id")
+    if not query_projects:
+        return
+    if expected_project_id is None or len(query_projects) != 1:
+        raise LookupError("Project query is outside the authenticated client scope")
+    raw_project_id = query_projects[0]
+    try:
+        project_id = int(raw_project_id)
+    except ValueError:
+        raise LookupError("Project query is invalid") from None
+    if str(project_id) != raw_project_id or project_id != expected_project_id:
+        raise LookupError("Project query is outside the authenticated client scope")
+
+
+def _validate_project_links(value: object, expected_project_id: int) -> None:
+    if isinstance(value, dict):
+        for key, nested in value.items():
+            if key in {"project_id", "last_project_id"} and nested is not None:
+                if type(nested) is not int or nested != expected_project_id:
+                    raise ProviderProtocolError("Provider response is invalid")
+            _validate_project_links(nested, expected_project_id)
+    elif isinstance(value, list):
+        for nested in value:
+            _validate_project_links(nested, expected_project_id)
+
+
 async def read_allowed_project(
     access: AuthenticatedSession,
     provider: LPTrackerAdapter,
@@ -73,8 +104,9 @@ async def read_allowed_project(
         raise ProviderError("Provider account is unavailable")
 
     response = await provider.get(f"/project/{project_id}")
-    if not isinstance(response, dict):
+    if not isinstance(response, dict) or response.get("status") != "success":
         raise ProviderProtocolError("Provider response is invalid")
+    _validate_project_links(response, project_id)
     result = response.get("result")
     if not isinstance(result, dict):
         raise ProviderProtocolError("Provider response is invalid")
@@ -92,17 +124,21 @@ async def read_allowed_project(
 
 @router.get("/projects", include_in_schema=False)
 async def projects(
+    request: Request,
     access: AuthenticatedSessionDependency,
     provider: ProviderDependency,
     provider_account: ProviderAccountDependency,
 ) -> JSONResponse:
     try:
+        _validate_project_query(request, None)
         project = await read_allowed_project(
             access,
             provider,
             provider_account,
             access.project_id,
         )
+    except LookupError:
+        return project_not_found_error()
     except ProviderError:
         return provider_unavailable_error()
     return JSONResponse({"status": "success", "result": [project]})
@@ -110,12 +146,14 @@ async def projects(
 
 @router.get("/project/{project_id}", include_in_schema=False)
 async def project(
+    request: Request,
     project_id: int,
     access: AuthenticatedSessionDependency,
     provider: ProviderDependency,
     provider_account: ProviderAccountDependency,
 ) -> JSONResponse:
     try:
+        _validate_project_query(request, project_id)
         result = await read_allowed_project(access, provider, provider_account, project_id)
     except LookupError:
         return project_not_found_error()

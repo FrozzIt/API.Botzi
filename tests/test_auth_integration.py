@@ -324,6 +324,21 @@ async def test_config_apply_and_sessions_are_shared_between_processes(tmp_path: 
                 version="2",
             )
 
+        auth_revision_three = AuthService(
+            sessions_one,
+            idle_timeout_seconds=86_400,
+            expected_config_revision=3,
+        )
+        token_a_v3 = await auth_revision_three.login(
+            login="client_a",
+            password=password_a_v2,
+            service="synthetic-service-a",
+            version="3",
+        )
+        access_a_v3 = await auth_revision_three.authenticate(token_a_v3)
+        assert access_a_v3.project_id == 10003
+        await auth_revision_three.logout(token_a_v3)
+
         with pytest.raises(ConfigRevisionError):
             await ConfigService(sessions_two).apply(revision_two)
         async with sessions_one() as session:
@@ -399,6 +414,13 @@ def test_two_app_instances_fail_closed_across_config_revisions(tmp_path: Path) -
         assert (
             httpx.post(
                 f"http://127.0.0.1:{port_one}/logout",
+                headers={"token": token},
+            ).json()
+            == neutral_error
+        )
+        assert (
+            httpx.get(
+                f"http://127.0.0.1:{port_one}/projects",
                 headers={"token": token},
             ).json()
             == neutral_error

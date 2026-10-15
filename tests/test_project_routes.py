@@ -4,6 +4,7 @@ from contextlib import asynccontextmanager
 import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
+from sqlalchemy.exc import SQLAlchemyError
 
 from proxy_api.auth.routes import get_auth_service
 from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed
@@ -147,7 +148,45 @@ def test_foreign_project_is_rejected_before_provider_call() -> None:
     assert provider.calls == []
 
 
-def test_unconfigured_provider_account_is_rejected_before_provider_call() -> None:
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/projects?project_id=10002",
+        "/projects?project_id=10001&project_id=10001",
+        "/project/10001?project_id=10002",
+        "/project/10001?project_id=10001&project_id=10001",
+    ],
+)
+def test_conflicting_or_repeated_project_query_is_rejected_before_provider_call(
+    path: str,
+) -> None:
+    client, _, provider = make_client()
+
+    with client:
+        response = client.get(path, headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 404, "message": "Project not found"}],
+    }
+    assert provider.calls == []
+
+
+def test_matching_project_query_keeps_positive_project_control() -> None:
+    client, _, provider = make_client()
+
+    with client:
+        response = client.get(
+            "/project/10001?project_id=10001",
+            headers={"token": "token-a"},
+        )
+
+    assert response.json()["result"]["id"] == 10001
+    assert provider.calls == ["/project/10001"]
+
+
+@pytest.mark.parametrize("path", ["/projects", "/project/10001"])
+def test_unconfigured_provider_account_is_rejected_before_provider_call(path: str) -> None:
     client, auth, provider = make_client()
     auth.sessions["token-a"] = AuthenticatedSession(
         "session-a",
@@ -157,13 +196,42 @@ def test_unconfigured_provider_account_is_rejected_before_provider_call() -> Non
     )
 
     with client:
-        response = client.get("/projects", headers={"token": "token-a"})
+        response = client.get(path, headers={"token": "token-a"})
 
     assert response.json() == {
         "status": "error",
         "errors": [{"code": 503, "message": "Service unavailable"}],
     }
     assert provider.calls == []
+
+
+def test_auth_database_failure_is_neutral_and_stops_provider_initialization() -> None:
+    class DatabaseUnavailableAuthService:
+        async def authenticate(self, _: str) -> AuthenticatedSession:
+            raise SQLAlchemyError("private database connection detail")
+
+    application = create_app()
+    application.router.lifespan_context = no_op_lifespan
+    provider_initializations = 0
+
+    def unavailable_provider() -> FakeProvider:
+        nonlocal provider_initializations
+        provider_initializations += 1
+        raise AssertionError("Provider must not initialize after auth database failure")
+
+    application.dependency_overrides[get_auth_service] = DatabaseUnavailableAuthService
+    application.dependency_overrides[get_provider_adapter] = unavailable_provider
+    application.dependency_overrides[get_configured_provider_account] = lambda: "primary"
+
+    with TestClient(application, raise_server_exceptions=False) as client:
+        response = client.get("/projects", headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 401, "message": "Authentication failed"}],
+    }
+    assert "database" not in response.text
+    assert provider_initializations == 0
 
 
 def test_invalid_token_is_rejected_before_provider_call() -> None:
@@ -296,6 +364,42 @@ def test_unexpected_provider_fields_are_not_returned() -> None:
     assert "internal_secret" not in response.text
     assert "foreign_project_marker" not in response.text
     assert "must-not-leak" not in response.text
+
+
+def test_nested_foreign_project_link_closes_project_response() -> None:
+    client, _, provider = make_client()
+    provider.responses[10001]["unexpected_relation"] = {
+        "project_id": 10002,
+        "internal_url": "https://provider.invalid/private",
+    }
+
+    with client:
+        response = client.get("/project/10001", headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 503, "message": "Service unavailable"}],
+    }
+    assert "unexpected_relation" not in response.text
+    assert "provider.invalid" not in response.text
+
+
+def test_error_envelope_with_plausible_project_result_fails_closed() -> None:
+    client, _, provider = make_client()
+    provider.response_override = {
+        "status": "error",
+        "errors": [{"code": 500, "message": "private upstream detail"}],
+        "result": provider.responses[10001],
+    }
+
+    with client:
+        response = client.get("/projects", headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 503, "message": "Service unavailable"}],
+    }
+    assert "private upstream detail" not in response.text
 
 
 @pytest.mark.parametrize(
