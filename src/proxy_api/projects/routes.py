@@ -1,18 +1,20 @@
-from typing import Annotated
+from collections.abc import AsyncIterator, Mapping, Sequence
+from contextlib import asynccontextmanager
+from typing import Annotated, Any
 
 from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from sqlalchemy.exc import SQLAlchemyError
 
 from proxy_api.auth.routes import AuthServiceDependency
-from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed
+from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed, AuthService
 from proxy_api.config import get_settings
 from proxy_api.infrastructure import get_provider_adapter
 from proxy_api.provider import LPTrackerAdapter, ProviderError, ProviderProtocolError
 
 router = APIRouter()
 
-ProviderDependency = Annotated[LPTrackerAdapter, Depends(get_provider_adapter)]
+RawProviderDependency = Annotated[LPTrackerAdapter, Depends(get_provider_adapter)]
 
 
 class ClientAuthenticationError(Exception):
@@ -42,6 +44,51 @@ AuthenticatedSessionDependency = Annotated[
     AuthenticatedSession,
     Depends(get_authenticated_session),
 ]
+
+
+class AuthorizedProvider:
+    def __init__(
+        self,
+        provider: LPTrackerAdapter,
+        auth_service: AuthService,
+        access: AuthenticatedSession,
+    ) -> None:
+        self._provider = provider
+        self._auth_service = auth_service
+        self._access = access
+
+    @asynccontextmanager
+    async def _send_guard(self) -> AsyncIterator[None]:
+        try:
+            async with self._auth_service.provider_request_guard(self._access):
+                yield
+        except (AuthenticationFailed, SQLAlchemyError):
+            raise ClientAuthenticationError from None
+
+    async def get(
+        self,
+        path: str,
+        *,
+        params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
+        deadline_seconds: float | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        return await self._provider.get(
+            path,
+            params=params,
+            deadline_seconds=deadline_seconds,
+            send_guard=self._send_guard,
+        )
+
+
+def get_authorized_provider(
+    access: AuthenticatedSessionDependency,
+    auth_service: AuthServiceDependency,
+    provider: RawProviderDependency,
+) -> AuthorizedProvider:
+    return AuthorizedProvider(provider, auth_service, access)
+
+
+ProviderDependency = Annotated[AuthorizedProvider, Depends(get_authorized_provider)]
 
 
 def project_not_found_error() -> JSONResponse:
@@ -94,7 +141,7 @@ def _validate_project_links(value: object, expected_project_id: int) -> None:
 
 async def read_allowed_project(
     access: AuthenticatedSession,
-    provider: LPTrackerAdapter,
+    provider: AuthorizedProvider,
     provider_account: str,
     project_id: int,
 ) -> dict[str, object]:

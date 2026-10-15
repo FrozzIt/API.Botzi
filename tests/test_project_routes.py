@@ -1,5 +1,8 @@
+import asyncio
 from collections.abc import AsyncIterator
+from concurrent.futures import ThreadPoolExecutor
 from contextlib import asynccontextmanager
+from threading import Event
 
 import pytest
 from fastapi import FastAPI
@@ -11,10 +14,16 @@ from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed
 from proxy_api.infrastructure import get_provider_adapter
 from proxy_api.main import create_app
 from proxy_api.projects.routes import get_configured_provider_account
+from proxy_api.provider.client import ProviderSendGuard
 
 
 @asynccontextmanager
 async def no_op_lifespan(_: FastAPI) -> AsyncIterator[None]:
+    yield
+
+
+@asynccontextmanager
+async def allow_send() -> AsyncIterator[None]:
     yield
 
 
@@ -24,6 +33,7 @@ class FakeAuthService:
             "token-a": AuthenticatedSession("session-a", "client-a", "primary", 10001),
             "token-b": AuthenticatedSession("session-b", "client-b", "primary", 10002),
         }
+        self.guard_error: Exception | None = None
 
     async def authenticate(self, token: str) -> AuthenticatedSession:
         try:
@@ -34,6 +44,17 @@ class FakeAuthService:
     async def logout(self, token: str) -> None:
         if self.sessions.pop(token, None) is None:
             raise AuthenticationFailed("Authentication failed")
+
+    @asynccontextmanager
+    async def provider_request_guard(
+        self,
+        access: AuthenticatedSession,
+    ) -> AsyncIterator[None]:
+        if self.guard_error is not None:
+            raise self.guard_error
+        if access not in self.sessions.values():
+            raise AuthenticationFailed("Authentication failed")
+        yield
 
 
 class FakeProvider:
@@ -55,15 +76,39 @@ class FakeProvider:
         }
         self.error: Exception | None = None
         self.response_override: object | None = None
+        self.wait_started: Event | None = None
+        self.release_wait: Event | None = None
 
-    async def get(self, path: str) -> object:
-        self.calls.append(path)
-        if self.error is not None:
-            raise self.error
-        if self.response_override is not None:
-            return self.response_override
-        project_id = int(path.rsplit("/", 1)[1])
-        return {"status": "success", "result": self.responses[project_id]}
+    def block_next_send(self) -> tuple[Event, Event]:
+        self.wait_started = Event()
+        self.release_wait = Event()
+        return self.wait_started, self.release_wait
+
+    async def get(
+        self,
+        path: str,
+        *,
+        params: object = None,
+        deadline_seconds: float | None = None,
+        send_guard: ProviderSendGuard | None = None,
+    ) -> object:
+        del params, deadline_seconds
+        if self.wait_started is not None and self.release_wait is not None:
+            wait_started = self.wait_started
+            release_wait = self.release_wait
+            self.wait_started = None
+            self.release_wait = None
+            wait_started.set()
+            if not await asyncio.to_thread(release_wait.wait, 2):
+                raise AssertionError("Controlled provider wait was not released")
+        async with send_guard() if send_guard is not None else allow_send():
+            self.calls.append(path)
+            if self.error is not None:
+                raise self.error
+            if self.response_override is not None:
+                return self.response_override
+            project_id = int(path.rsplit("/", 1)[1])
+            return {"status": "success", "result": self.responses[project_id]}
 
 
 def make_client() -> tuple[TestClient, FakeAuthService, FakeProvider]:
@@ -133,6 +178,67 @@ def test_two_clients_each_receive_only_their_configured_project() -> None:
         "/project/10002",
     ]
     assert "/projects" not in provider.calls
+
+
+def test_logout_during_quota_wait_stops_send_and_keeps_other_client_working() -> None:
+    client, _, provider = make_client()
+    wait_started, release_wait = provider.block_next_send()
+
+    with client, ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(client.get, "/projects", headers={"token": "token-a"})
+        assert wait_started.wait(1)
+        logout = client.post("/logout", headers={"token": "token-a"})
+        release_wait.set()
+        rejected = pending.result(timeout=2)
+        unaffected = client.get("/projects", headers={"token": "token-b"})
+
+    assert logout.json() == {"status": "success", "result": {}}
+    assert rejected.json() == {
+        "status": "error",
+        "errors": [{"code": 401, "message": "Authentication failed"}],
+    }
+    assert unaffected.json()["result"][0]["id"] == 10002
+    assert provider.calls == ["/project/10002"]
+
+
+def test_assignment_change_during_quota_wait_stops_send_without_redirect() -> None:
+    client, auth, provider = make_client()
+    wait_started, release_wait = provider.block_next_send()
+
+    with client, ThreadPoolExecutor(max_workers=1) as executor:
+        pending = executor.submit(client.get, "/projects", headers={"token": "token-a"})
+        assert wait_started.wait(1)
+        auth.sessions["token-a"] = AuthenticatedSession(
+            "session-a",
+            "client-a",
+            "primary",
+            10002,
+        )
+        release_wait.set()
+        rejected = pending.result(timeout=2)
+        unaffected = client.get("/projects", headers={"token": "token-b"})
+
+    assert rejected.json() == {
+        "status": "error",
+        "errors": [{"code": 401, "message": "Authentication failed"}],
+    }
+    assert unaffected.json()["result"][0]["id"] == 10002
+    assert provider.calls == ["/project/10002"]
+
+
+def test_unavailable_recheck_after_quota_wait_fails_neutrally_without_send() -> None:
+    client, auth, provider = make_client()
+    auth.guard_error = SQLAlchemyError("private database recheck detail")
+
+    with client:
+        response = client.get("/projects", headers={"token": "token-a"})
+
+    assert response.json() == {
+        "status": "error",
+        "errors": [{"code": 401, "message": "Authentication failed"}],
+    }
+    assert "database" not in response.text
+    assert provider.calls == []
 
 
 def test_foreign_project_is_rejected_before_provider_call() -> None:

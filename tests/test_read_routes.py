@@ -15,6 +15,7 @@ from proxy_api.infrastructure import get_provider_adapter
 from proxy_api.main import create_app
 from proxy_api.projects.routes import get_configured_provider_account
 from proxy_api.provider import ProviderError, ProviderObjectNotFound, ProviderUnavailable
+from proxy_api.provider.client import ProviderSendGuard
 from proxy_api.reads.detail_ownership import (
     DetailOwnership,
     DetailOwnershipConflict,
@@ -38,6 +39,11 @@ async def no_op_lifespan(_: FastAPI) -> AsyncIterator[None]:
     yield
 
 
+@asynccontextmanager
+async def allow_send() -> AsyncIterator[None]:
+    yield
+
+
 class FakeAuthService:
     def __init__(self) -> None:
         self.sessions = {
@@ -54,6 +60,15 @@ class FakeAuthService:
     async def logout(self, token: str) -> None:
         if self.sessions.pop(token, None) is None:
             raise AuthenticationFailed("Authentication failed")
+
+    @asynccontextmanager
+    async def provider_request_guard(
+        self,
+        access: AuthenticatedSession,
+    ) -> AsyncIterator[None]:
+        if access not in self.sessions.values():
+            raise AuthenticationFailed("Authentication failed")
+        yield
 
 
 def contact_payload(project_id: int, contact_id: int) -> dict[str, object]:
@@ -227,23 +242,27 @@ class FakeProvider:
         path: str,
         *,
         params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
+        deadline_seconds: float | None = None,
+        send_guard: ProviderSendGuard | None = None,
     ) -> object:
-        self.calls.append((path, params))
-        if self.error is not None:
-            raise self.error
-        response_key = path
-        if path == "/contact/search":
-            assert params is not None
-            project_id = (
-                next(value for key, value in params.items() if key == "project_id")
-                if isinstance(params, Mapping)
-                else next(value for key, value in params if key == "project_id")
-            )
-            response_key = f"{path}:{project_id}"
-        try:
-            return self.responses[response_key]
-        except KeyError:
-            raise ProviderObjectNotFound("private provider detail") from None
+        del deadline_seconds
+        async with send_guard() if send_guard is not None else allow_send():
+            self.calls.append((path, params))
+            if self.error is not None:
+                raise self.error
+            response_key = path
+            if path == "/contact/search":
+                assert params is not None
+                project_id = (
+                    next(value for key, value in params.items() if key == "project_id")
+                    if isinstance(params, Mapping)
+                    else next(value for key, value in params if key == "project_id")
+                )
+                response_key = f"{path}:{project_id}"
+            try:
+                return self.responses[response_key]
+            except KeyError:
+                raise ProviderObjectNotFound("private provider detail") from None
 
 
 class FakeDetailOwnershipStore:

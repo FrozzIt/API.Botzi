@@ -2,12 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import Awaitable, Callable
+from collections.abc import AsyncIterator, Awaitable, Callable
+from contextlib import asynccontextmanager
 
 import httpx
 import pytest
 from redis.exceptions import RedisError
 
+from proxy_api.auth.service import AuthenticationFailed
 from proxy_api.provider.client import LPTrackerAdapter
 from proxy_api.provider.errors import (
     ProviderAuthenticationError,
@@ -58,6 +60,16 @@ class BlockingQuota:
         await asyncio.sleep(1)
 
 
+class ControlledQuota:
+    def __init__(self) -> None:
+        self.wait_started = asyncio.Event()
+        self.release_wait = asyncio.Event()
+
+    async def acquire(self, deadline: float) -> None:
+        self.wait_started.set()
+        await self.release_wait.wait()
+
+
 class UnavailableRedis:
     async def eval(self, *_: object) -> object:
         raise RedisError("synthetic Redis detail must stay private")
@@ -94,6 +106,13 @@ def make_adapter(
 async def test_login_401_refresh_and_retry_share_quota_and_deadline() -> None:
     requests: list[httpx.Request] = []
     login_count = 0
+    guard_calls = 0
+
+    @asynccontextmanager
+    async def send_guard() -> AsyncIterator[None]:
+        nonlocal guard_calls
+        guard_calls += 1
+        yield
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal login_count
@@ -124,7 +143,7 @@ async def test_login_401_refresh_and_retry_share_quota_and_deadline() -> None:
     tokens = CallbackTokenManager()
     adapter = make_adapter(httpx.MockTransport(handler), quota, tokens)
     try:
-        response = await adapter.get("/safe-read")
+        response = await adapter.get("/safe-read", send_guard=send_guard)
     finally:
         await adapter.aclose()
 
@@ -132,6 +151,7 @@ async def test_login_401_refresh_and_retry_share_quota_and_deadline() -> None:
     assert login_count == 2
     assert tokens.refresh_calls == 1
     assert quota.calls == 4
+    assert guard_calls == 4
     assert [request.url.path for request in requests] == [
         "/login",
         "/safe-read",
@@ -209,6 +229,39 @@ async def test_quota_wait_and_http_call_are_bounded_by_deadline() -> None:
             await adapter.get("/safe-read")
     finally:
         await adapter.aclose()
+
+
+@pytest.mark.asyncio
+async def test_send_guard_runs_after_controlled_quota_wait_before_http() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"status": "success", "result": {}})
+
+    quota = ControlledQuota()
+    tokens = CallbackTokenManager()
+    tokens.current = ProviderToken("internal-token", "generation")
+    authorized = True
+
+    @asynccontextmanager
+    async def send_guard() -> AsyncIterator[None]:
+        if not authorized:
+            raise AuthenticationFailed("Authentication failed")
+        yield
+
+    adapter = make_adapter(httpx.MockTransport(handler), quota, tokens)
+    pending = asyncio.create_task(adapter.get("/safe-read", send_guard=send_guard))
+    try:
+        await quota.wait_started.wait()
+        authorized = False
+        quota.release_wait.set()
+        with pytest.raises(AuthenticationFailed):
+            await pending
+    finally:
+        await adapter.aclose()
+
+    assert requests == []
 
 
 @pytest.mark.asyncio
