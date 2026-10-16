@@ -6,12 +6,14 @@ from datetime import datetime
 from sqlalchemy import (
     BigInteger,
     Boolean,
+    CheckConstraint,
     DateTime,
     ForeignKey,
     Index,
     Integer,
     LargeBinary,
     String,
+    UniqueConstraint,
 )
 from sqlalchemy.dialects.postgresql import JSONB
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column
@@ -93,6 +95,49 @@ class ContactDetailOwnership(Base):
     project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     active: Mapped[bool] = mapped_column(Boolean, nullable=False, default=True)
     verified_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+
+
+class OperationJournal(Base):
+    __tablename__ = "operation_journal"
+    __table_args__ = (
+        UniqueConstraint(
+            "provider_account",
+            "client_key",
+            "project_id",
+            "operation",
+            "idempotency_key",
+            name="uq_operation_journal_scope_key",
+        ),
+        CheckConstraint(
+            "state IN ('pending', 'succeeded', 'failed', 'unknown')",
+            name="ck_operation_journal_state",
+        ),
+        Index("ix_operation_journal_state_created", "state", "created_at"),
+    )
+
+    request_id: Mapped[uuid.UUID] = mapped_column(default=uuid.uuid4, primary_key=True)
+    provider_account: Mapped[str] = mapped_column(String(64), nullable=False)
+    client_key: Mapped[str] = mapped_column(String(64), nullable=False)
+    project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
+    operation: Mapped[str] = mapped_column(String(32), nullable=False)
+    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
+    state: Mapped[str] = mapped_column(String(16), nullable=False)
+    safe_result: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
+    dispatch_started_at: Mapped[datetime | None] = mapped_column(
+        DateTime(timezone=True),
+        nullable=True,
+    )
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        server_default=func.now(),
+        nullable=False,
+    )
+    updated_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),
         nullable=False,

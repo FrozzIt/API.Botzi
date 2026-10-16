@@ -1,14 +1,17 @@
-from collections.abc import AsyncIterator
+import uuid
+from collections.abc import AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 
 from fastapi import Depends, FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
+from starlette.responses import Response
 
 from proxy_api.auth.routes import authentication_error
 from proxy_api.auth.routes import router as auth_router
 from proxy_api.config import get_settings
 from proxy_api.configuration.service import ConfigService
+from proxy_api.contacts.routes import router as contacts_router
 from proxy_api.infrastructure import (
     close_infrastructure,
     database_is_ready,
@@ -59,6 +62,20 @@ def create_app() -> FastAPI:
     application.include_router(auth_router)
     application.include_router(projects_router)
     application.include_router(reads_router)
+    application.include_router(contacts_router)
+
+    @application.middleware("http")
+    async def operation_request_id(
+        request: Request,
+        call_next: Callable[[Request], Awaitable[Response]],
+    ) -> Response:
+        is_contact_create = request.method == "POST" and request.url.path == "/contact"
+        if is_contact_create:
+            request.state.operation_request_id = uuid.uuid4()
+        response = await call_next(request)
+        if is_contact_create and "X-Request-ID" not in response.headers:
+            response.headers["X-Request-ID"] = str(request.state.operation_request_id)
+        return response
 
     @application.exception_handler(ClientAuthenticationError)
     async def client_authentication_error(

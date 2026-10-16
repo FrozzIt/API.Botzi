@@ -158,3 +158,27 @@ Project-membership fields `project_id`, `project_ids`, `projects`, `last_project
 Для оставшихся операций граница доступа предлагается следующая: C05 — project precheck без утверждения каскадов; C06–C07 — только trusted mapping и повторная parent check; L01/L06 — без неподтверждённых owner/observers; T02–T03 — project check и redaction вложенных staff fields. Detail, известный только по ID, получает нейтральный отказ. Точный внешний код (`400`, `404` или `501`) остаётся вопросом CRM-контракта в 0.5.
 
 Предложение не означает принятие 0.3 или G0 и не разрешает переход к 0.4 до решения PM.
+
+## Task 3.1 — повторная проверка C02 для журнала операций
+
+**Live-окно:** 2026-10-16, Europe/Moscow
+**Объём:** только C02 в двух разрешённых тестовых проектах A/B и точечный cleanup
+
+Выполнен один login, по одному `POST /contact` в каждом проекте, удаление только
+двух однозначно созданных синтетических contacts и один logout. Использованы
+уникальные имена и email в зарезервированном домене `example.invalid`.
+Credentials, token, фактические marker и object/project IDs не выводились и не
+сохранялись. Неоднозначных исходов записи и повторов после записи не было.
+
+Факты live-проверки, уверенность высокая:
+
+- оба C02 вернули `status=success`; `project_id`, name и единственный email detail
+  точно совпали с отправленными значениями соответствующего проекта;
+- result содержал ключи `created_at`, `details`, `id`, `name`, `project_id`;
+- contact ID и detail ID имели тип integer; detail содержал `data`, `id`, `type`;
+- оба созданных contact удалены отдельными C05 с `status=success`; logout успешен;
+- известных оставшихся active probe contacts нет.
+
+Проверка выполнена напрямую против LPTracker, а не через развёрнутый ProxyAPI или
+CRM. Поэтому она подтверждает актуальную upstream-форму C02 и cleanup, но не
+является E2E-доказательством маршрута ProxyAPI, Idempotency-Key или поведения CRM.

@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -78,6 +78,26 @@ class AuthorizedProvider:
             deadline_seconds=deadline_seconds,
             send_guard=self._send_guard,
         )
+
+    async def post_once(
+        self,
+        path: str,
+        *,
+        json_body: Mapping[str, object],
+        before_send: Callable[[], Awaitable[None]],
+        deadline_seconds: float | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        return await self._provider.post_once(
+            path,
+            json_body=json_body,
+            before_send=before_send,
+            deadline_seconds=deadline_seconds,
+            send_guard=self._send_guard,
+        )
+
+    async def recheck_access(self) -> None:
+        async with self._send_guard():
+            pass
 
 
 def get_authorized_provider(

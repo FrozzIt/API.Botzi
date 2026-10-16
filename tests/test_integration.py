@@ -58,4 +58,5 @@ async def test_initial_migration_is_applied() -> None:
     assert "auth_sessions" in table_names
     assert "config_state" in table_names
     assert "contact_detail_ownership" in table_names
+    assert "operation_journal" in table_names
     assert "service_state" in table_names
