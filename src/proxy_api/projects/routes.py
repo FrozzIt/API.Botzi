@@ -1,4 +1,4 @@
-from collections.abc import AsyncIterator, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from typing import Annotated, Any
 
@@ -79,6 +79,26 @@ class AuthorizedProvider:
             send_guard=self._send_guard,
         )
 
+    async def post_once(
+        self,
+        path: str,
+        *,
+        json_body: Mapping[str, object],
+        before_send: Callable[[], Awaitable[None]],
+        deadline_seconds: float | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        return await self._provider.post_once(
+            path,
+            json_body=json_body,
+            before_send=before_send,
+            deadline_seconds=deadline_seconds,
+            send_guard=self._send_guard,
+        )
+
+    async def recheck_access(self) -> None:
+        async with self._send_guard():
+            pass
+
 
 def get_authorized_provider(
     access: AuthenticatedSessionDependency,
@@ -109,7 +129,7 @@ def provider_unavailable_error() -> JSONResponse:
     )
 
 
-def _validate_project_query(
+def validate_project_query(
     request: Request,
     expected_project_id: int | None,
 ) -> None:
@@ -177,7 +197,7 @@ async def projects(
     provider_account: ProviderAccountDependency,
 ) -> JSONResponse:
     try:
-        _validate_project_query(request, None)
+        validate_project_query(request, None)
         project = await read_allowed_project(
             access,
             provider,
@@ -200,7 +220,7 @@ async def project(
     provider_account: ProviderAccountDependency,
 ) -> JSONResponse:
     try:
-        _validate_project_query(request, project_id)
+        validate_project_query(request, project_id)
         result = await read_allowed_project(access, provider, provider_account, project_id)
     except LookupError:
         return project_not_found_error()

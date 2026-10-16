@@ -265,6 +265,132 @@ async def test_send_guard_runs_after_controlled_quota_wait_before_http() -> None
 
 
 @pytest.mark.asyncio
+async def test_post_once_marks_dispatch_after_quota_and_never_retries_401() -> None:
+    requests: list[httpx.Request] = []
+    events: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        events.append("http")
+        requests.append(request)
+        return httpx.Response(
+            200,
+            json={"status": "error", "errors": [{"code": 401, "message": "raw"}]},
+        )
+
+    quota = ControlledQuota()
+    tokens = CallbackTokenManager()
+    tokens.current = ProviderToken("internal-token", "generation")
+
+    async def before_send() -> None:
+        events.append("dispatch")
+
+    adapter = make_adapter(httpx.MockTransport(handler), quota, tokens)
+    pending = asyncio.create_task(
+        adapter.post_once(
+            "/contact",
+            json_body={"project_id": 10001},
+            before_send=before_send,
+        )
+    )
+    try:
+        await quota.wait_started.wait()
+        assert events == []
+        quota.release_wait.set()
+        response = await pending
+    finally:
+        await adapter.aclose()
+
+    assert response["status"] == "error"
+    assert events == ["dispatch", "http"]
+    assert len(requests) == 1
+    assert tokens.refresh_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_post_once_timeout_after_dispatch_has_no_automatic_retry() -> None:
+    calls = 0
+    dispatches = 0
+
+    async def handler(_: httpx.Request) -> httpx.Response:
+        nonlocal calls
+        calls += 1
+        await asyncio.sleep(1)
+        return httpx.Response(200, json={"status": "success", "result": {}})
+
+    async def before_send() -> None:
+        nonlocal dispatches
+        dispatches += 1
+
+    tokens = CallbackTokenManager()
+    tokens.current = ProviderToken("internal-token", "generation")
+    adapter = make_adapter(
+        httpx.MockTransport(handler),
+        RecordingQuota(),
+        tokens,
+        deadline=0.05,
+        http_timeout=0.02,
+    )
+    try:
+        with pytest.raises(ProviderDeadlineExceeded):
+            await adapter.post_once(
+                "/contact",
+                json_body={"project_id": 10001},
+                before_send=before_send,
+            )
+    finally:
+        await adapter.aclose()
+
+    assert dispatches == 1
+    assert calls == 1
+    assert tokens.refresh_calls == 0
+
+
+@pytest.mark.asyncio
+async def test_post_once_rechecks_access_after_quota_before_dispatch() -> None:
+    requests: list[httpx.Request] = []
+    dispatches = 0
+    authorized = True
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json={"status": "success", "result": {}})
+
+    @asynccontextmanager
+    async def send_guard() -> AsyncIterator[None]:
+        if not authorized:
+            raise AuthenticationFailed("Authentication failed")
+        yield
+
+    async def before_send() -> None:
+        nonlocal dispatches
+        dispatches += 1
+
+    quota = ControlledQuota()
+    tokens = CallbackTokenManager()
+    tokens.current = ProviderToken("internal-token", "generation")
+    adapter = make_adapter(httpx.MockTransport(handler), quota, tokens)
+    pending = asyncio.create_task(
+        adapter.post_once(
+            "/contact",
+            json_body={"project_id": 10001},
+            before_send=before_send,
+            send_guard=send_guard,
+        )
+    )
+    try:
+        await quota.wait_started.wait()
+        authorized = False
+        quota.release_wait.set()
+        with pytest.raises(AuthenticationFailed):
+            await pending
+    finally:
+        await adapter.aclose()
+
+    assert dispatches == 0
+    assert requests == []
+
+
+@pytest.mark.asyncio
 async def test_redis_failure_does_not_bypass_quota() -> None:
     limiter = DistributedQuotaLimiter(UnavailableRedis())  # type: ignore[arg-type]
     deadline = asyncio.get_running_loop().time() + 1

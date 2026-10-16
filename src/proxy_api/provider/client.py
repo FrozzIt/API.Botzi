@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from collections.abc import AsyncIterator, Callable, Mapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from typing import Any
 
@@ -19,6 +19,7 @@ from proxy_api.provider.quota import DistributedQuotaLimiter
 from proxy_api.provider.token import DistributedTokenManager
 
 ProviderSendGuard = Callable[[], AbstractAsyncContextManager[None]]
+ProviderBeforeSend = Callable[[], Awaitable[None]]
 
 
 @asynccontextmanager
@@ -114,6 +115,40 @@ class LPTrackerAdapter:
         except TimeoutError:
             raise ProviderDeadlineExceeded("Provider deadline exceeded") from None
 
+    async def post_once(
+        self,
+        path: str,
+        *,
+        json_body: Mapping[str, object],
+        before_send: ProviderBeforeSend,
+        deadline_seconds: float | None = None,
+        send_guard: ProviderSendGuard | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        if not path.startswith("/") or path.startswith("//"):
+            raise ValueError("Provider path must be relative to the configured host")
+        budget = self._default_deadline_seconds if deadline_seconds is None else deadline_seconds
+        if budget <= 0 or budget > self._default_deadline_seconds:
+            raise ValueError("Provider deadline is outside the configured bound")
+        deadline = asyncio.get_running_loop().time() + budget
+        try:
+            async with asyncio.timeout_at(deadline):
+
+                async def guarded_login(login_deadline: float) -> str:
+                    return await self._login(login_deadline, send_guard=send_guard)
+
+                token = await self._tokens.current_or_refresh(guarded_login, deadline)
+                return await self._request(
+                    "POST",
+                    path,
+                    deadline=deadline,
+                    token=token.value,
+                    json_body=json_body,
+                    send_guard=send_guard,
+                    before_send=before_send,
+                )
+        except TimeoutError:
+            raise ProviderDeadlineExceeded("Provider deadline exceeded") from None
+
     async def _login(
         self,
         deadline: float,
@@ -152,14 +187,20 @@ class LPTrackerAdapter:
         deadline: float,
         token: str | None = None,
         params: Mapping[str, str | int] | Sequence[tuple[str, str | int]] | None = None,
-        json_body: Mapping[str, str] | None = None,
+        json_body: Mapping[str, object] | None = None,
         send_guard: ProviderSendGuard | None = None,
+        before_send: ProviderBeforeSend | None = None,
     ) -> dict[str, Any] | list[Any]:
         await self._quota.acquire(deadline)
         async with send_guard() if send_guard is not None else _allow_send():
             remaining = deadline - asyncio.get_running_loop().time()
             if remaining <= 0:
                 raise ProviderDeadlineExceeded("Provider deadline exceeded")
+            if before_send is not None:
+                await before_send()
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise ProviderDeadlineExceeded("Provider deadline exceeded")
             request = self._http.build_request(
                 method,
                 path,
