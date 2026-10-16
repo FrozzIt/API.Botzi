@@ -7,7 +7,11 @@ from enum import StrEnum
 from sqlalchemy.exc import SQLAlchemyError
 
 from proxy_api.auth.service import AuthenticatedSession
-from proxy_api.operations import OperationJournalService, OperationState, payload_fingerprint
+from proxy_api.operations import (
+    OperationJournalService,
+    OperationState,
+    OperationTransitionRejected,
+)
 from proxy_api.projects.routes import AuthorizedProvider, ClientAuthenticationError
 from proxy_api.provider import ProviderError, ProviderProtocolError
 from proxy_api.reads.detail_ownership import (
@@ -66,20 +70,19 @@ class ContactWriter:
             "name": name,
             "details": [{"type": detail_type, "data": detail_data}],
         }
-        fingerprint = payload_fingerprint(upstream_payload)
         try:
             begun = await self._journal.begin(
                 access,
                 request_id=request_id,
                 operation=CONTACT_CREATE_OPERATION,
                 idempotency_key=idempotency_key,
-                fingerprint=fingerprint,
+                payload=upstream_payload,
             )
         except (SQLAlchemyError, RuntimeError):
             return ContactCreateOutcome(request_id, ContactCreateState.FAILED)
         record = begun.record
         if not begun.execute:
-            if record.fingerprint != fingerprint:
+            if record.fingerprint != self._journal.payload_fingerprint(upstream_payload):
                 return ContactCreateOutcome(record.request_id, ContactCreateState.CONFLICT)
             if record.state is OperationState.SUCCEEDED:
                 if record.safe_result is None:
@@ -130,6 +133,8 @@ class ContactWriter:
             if not dispatch_started:
                 await self._mark_failed(record.request_id)
             raise
+        except OperationTransitionRejected:
+            return ContactCreateOutcome(record.request_id, ContactCreateState.UNKNOWN)
         except (ProviderError, ProviderProtocolError, DetailOwnershipConflict):
             if not dispatch_started:
                 await self._mark_failed(record.request_id)

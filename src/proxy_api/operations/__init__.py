@@ -3,6 +3,8 @@ from proxy_api.operations.journal import (
     OperationJournalService,
     OperationRecord,
     OperationState,
+    OperationTransitionRejected,
+    idempotency_digest,
     payload_fingerprint,
 )
 
@@ -11,5 +13,7 @@ __all__ = [
     "OperationJournalService",
     "OperationRecord",
     "OperationState",
+    "OperationTransitionRejected",
+    "idempotency_digest",
     "payload_fingerprint",
 ]

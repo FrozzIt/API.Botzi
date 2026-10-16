@@ -10,6 +10,7 @@ from proxy_api.operations import (
     BeginOperation,
     OperationRecord,
     OperationState,
+    OperationTransitionRejected,
     payload_fingerprint,
 )
 from proxy_api.projects.routes import ClientAuthenticationError
@@ -22,6 +23,7 @@ class FakeJournal:
         self.records: dict[str, OperationRecord] = {}
         self.transitions: list[tuple[str, uuid.UUID]] = []
         self.begin_error: Exception | None = None
+        self.dispatch_error: Exception | None = None
 
     async def begin(
         self,
@@ -30,11 +32,12 @@ class FakeJournal:
         request_id: uuid.UUID,
         operation: str,
         idempotency_key: str | None,
-        fingerprint: str,
+        payload: dict[str, object],
     ) -> BeginOperation:
         del access, operation
         if self.begin_error is not None:
             raise self.begin_error
+        fingerprint = self.payload_fingerprint(payload)
         if idempotency_key is not None and idempotency_key in self.records:
             return BeginOperation(self.records[idempotency_key], execute=False)
         record = OperationRecord(request_id, fingerprint, OperationState.PENDING, None)
@@ -42,7 +45,13 @@ class FakeJournal:
             self.records[idempotency_key] = record
         return BeginOperation(record, execute=True)
 
+    @staticmethod
+    def payload_fingerprint(payload: dict[str, object]) -> str:
+        return payload_fingerprint(payload, b"test-contact-writer-secret")
+
     async def mark_dispatch_started(self, request_id: uuid.UUID) -> None:
+        if self.dispatch_error is not None:
+            raise self.dispatch_error
         self.transitions.append(("unknown", request_id))
         self._replace(request_id, state=OperationState.UNKNOWN)
 
@@ -149,9 +158,9 @@ def test_payload_fingerprint_is_canonical_and_contains_no_plaintext() -> None:
         "project_id": 10001,
     }
 
-    fingerprint = payload_fingerprint(first)
+    fingerprint = payload_fingerprint(first, b"test-contact-writer-secret")
 
-    assert fingerprint == payload_fingerprint(reordered)
+    assert fingerprint == payload_fingerprint(reordered, b"test-contact-writer-secret")
     assert len(fingerprint) == 64
     assert "contact@example.invalid" not in fingerprint
 
@@ -334,6 +343,20 @@ async def test_revocation_before_business_send_fails_journal_and_preserves_auth_
 
     assert provider.calls == []
     assert [state for state, _ in journal.transitions] == ["failed"]
+
+
+@pytest.mark.asyncio
+async def test_expired_pending_executor_cannot_send_and_returns_unknown() -> None:
+    journal = FakeJournal()
+    journal.dispatch_error = OperationTransitionRejected("pending lease expired")
+    provider = FakeProvider()
+    writer = ContactWriter(journal, FakeOwnershipStore())  # type: ignore[arg-type]
+
+    outcome = await create(writer, provider)
+
+    assert outcome.state is ContactCreateState.UNKNOWN
+    assert provider.calls == []
+    assert journal.transitions == []
 
 
 @pytest.mark.asyncio

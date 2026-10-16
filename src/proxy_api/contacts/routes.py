@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, Header, Request
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
+from proxy_api.config import get_settings
 from proxy_api.contacts.service import ContactCreateOutcome, ContactCreateState, ContactWriter
 from proxy_api.infrastructure import get_session_factory
 from proxy_api.operations import OperationJournalService
@@ -57,9 +58,17 @@ class ContactCreateRequest(BaseModel):
 
 
 def get_contact_writer() -> ContactWriter:
+    settings = get_settings()
+    digest_key = settings.provider_token_encryption_key
+    if digest_key is None:
+        raise RuntimeError("Operation journal digest key is not configured")
     session_factory = get_session_factory()
     return ContactWriter(
-        OperationJournalService(session_factory),
+        OperationJournalService(
+            session_factory,
+            digest_secret=digest_key.get_secret_value().encode("utf-8"),
+            pending_lease_seconds=settings.provider_deadline_seconds + 1,
+        ),
         DetailOwnershipStore(session_factory),
     )
 
@@ -128,11 +137,7 @@ async def create_contact(
     if payload.project_id is not None and payload.project_id != access.project_id:
         return project_not_found_error()
     if idempotency_keys is not None:
-        if (
-            len(idempotency_keys) != 1
-            or not idempotency_keys[0].strip()
-            or len(idempotency_keys[0]) > 128
-        ):
+        if len(idempotency_keys) != 1:
             return request_invalid_error()
         idempotency_key = idempotency_keys[0]
     else:

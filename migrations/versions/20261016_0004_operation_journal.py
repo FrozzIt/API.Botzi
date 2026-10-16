@@ -25,7 +25,7 @@ def upgrade() -> None:
         sa.Column("client_key", sa.String(length=64), nullable=False),
         sa.Column("project_id", sa.BigInteger(), nullable=False),
         sa.Column("operation", sa.String(length=32), nullable=False),
-        sa.Column("idempotency_key", sa.String(length=128), nullable=True),
+        sa.Column("idempotency_digest", sa.String(length=64), nullable=True),
         sa.Column("fingerprint", sa.String(length=64), nullable=False),
         sa.Column("state", sa.String(length=16), nullable=False),
         sa.Column(
@@ -34,6 +34,7 @@ def upgrade() -> None:
             nullable=True,
         ),
         sa.Column("dispatch_started_at", sa.DateTime(timezone=True), nullable=True),
+        sa.Column("pending_expires_at", sa.DateTime(timezone=True), nullable=False),
         sa.Column(
             "created_at",
             sa.DateTime(timezone=True),
@@ -56,7 +57,7 @@ def upgrade() -> None:
             "client_key",
             "project_id",
             "operation",
-            "idempotency_key",
+            "idempotency_digest",
             name="uq_operation_journal_scope_key",
         ),
     )

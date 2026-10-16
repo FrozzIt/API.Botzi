@@ -109,7 +109,7 @@ class OperationJournal(Base):
             "client_key",
             "project_id",
             "operation",
-            "idempotency_key",
+            "idempotency_digest",
             name="uq_operation_journal_scope_key",
         ),
         CheckConstraint(
@@ -124,13 +124,17 @@ class OperationJournal(Base):
     client_key: Mapped[str] = mapped_column(String(64), nullable=False)
     project_id: Mapped[int] = mapped_column(BigInteger, nullable=False)
     operation: Mapped[str] = mapped_column(String(32), nullable=False)
-    idempotency_key: Mapped[str | None] = mapped_column(String(128), nullable=True)
+    idempotency_digest: Mapped[str | None] = mapped_column(String(64), nullable=True)
     fingerprint: Mapped[str] = mapped_column(String(64), nullable=False)
     state: Mapped[str] = mapped_column(String(16), nullable=False)
     safe_result: Mapped[dict[str, object] | None] = mapped_column(JSONB, nullable=True)
     dispatch_started_at: Mapped[datetime | None] = mapped_column(
         DateTime(timezone=True),
         nullable=True,
+    )
+    pending_expires_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True),
+        nullable=False,
     )
     created_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
