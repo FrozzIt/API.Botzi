@@ -31,6 +31,10 @@ class ConfigState(Base):
     schema_version: Mapped[int] = mapped_column(Integer, nullable=False)
     revision: Mapped[int] = mapped_column(BigInteger, unique=True, nullable=False)
     content_digest: Mapped[str] = mapped_column(String(64), nullable=False)
+    operation_journal_digest_key_verifier: Mapped[str | None] = mapped_column(
+        String(64),
+        nullable=True,
+    )
     applied_at: Mapped[datetime] = mapped_column(
         DateTime(timezone=True),
         server_default=func.now(),

@@ -14,9 +14,10 @@ from sqlalchemy.dialects.postgresql import insert
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker
 
 from proxy_api.auth.service import AuthenticatedSession
-from proxy_api.database import OperationJournal
+from proxy_api.database import ConfigState, OperationJournal
 
 FINGERPRINT_PATTERN = re.compile(r"^[0-9a-f]{64}$")
+IDEMPOTENCY_KEY_MAX_LENGTH = 128
 
 
 class OperationState(StrEnum):
@@ -58,8 +59,20 @@ def idempotency_digest(idempotency_key: str, secret: bytes) -> str:
     ).hexdigest()
 
 
+def digest_key_verifier(secret: bytes) -> str:
+    return hmac.new(
+        secret,
+        b"proxyapi:operation-journal-key:v1",
+        hashlib.sha256,
+    ).hexdigest()
+
+
 class OperationTransitionRejected(RuntimeError):
     """The durable state changed before the requested transition."""
+
+
+class OperationDigestKeyMismatch(RuntimeError):
+    """The configured digest key does not match the durable journal verifier."""
 
 
 class OperationJournalService:
@@ -92,6 +105,10 @@ class OperationJournalService:
     ) -> BeginOperation:
         if not operation or len(operation) > 32:
             raise ValueError("Operation identifier is invalid")
+        if idempotency_key is not None and (
+            not idempotency_key.strip() or len(idempotency_key) > IDEMPOTENCY_KEY_MAX_LENGTH
+        ):
+            raise ValueError("Idempotency key is invalid")
         fingerprint = self.payload_fingerprint(payload)
         if not FINGERPRINT_PATTERN.fullmatch(fingerprint):
             raise ValueError("Operation fingerprint is invalid")
@@ -113,6 +130,7 @@ class OperationJournalService:
             "pending_expires_at": now + self._pending_lease,
         }
         async with self._session_factory() as session, session.begin():
+            await self._verify_digest_key(session)
             if idempotency_key is None:
                 session.add(OperationJournal(**values))
                 return BeginOperation(
@@ -163,6 +181,23 @@ class OperationJournalService:
                 existing.state = OperationState.UNKNOWN.value
                 existing.updated_at = checked_at
             return BeginOperation(self._record(existing), execute=False)
+
+    async def _verify_digest_key(self, session: AsyncSession) -> None:
+        expected = digest_key_verifier(self._digest_secret)
+        state = await session.get(ConfigState, 1, with_for_update=True)
+        if state is None:
+            raise OperationDigestKeyMismatch("Operation journal configuration is unavailable")
+        durable = state.operation_journal_digest_key_verifier
+        if durable is None:
+            existing = await session.scalar(select(OperationJournal.request_id).limit(1))
+            if existing is not None:
+                raise OperationDigestKeyMismatch(
+                    "Operation journal digest key requires explicit reconciliation"
+                )
+            state.operation_journal_digest_key_verifier = expected
+            return
+        if not hmac.compare_digest(durable, expected):
+            raise OperationDigestKeyMismatch("Operation journal digest key does not match")
 
     async def mark_dispatch_started(self, request_id: uuid.UUID) -> None:
         now = datetime.now(UTC)

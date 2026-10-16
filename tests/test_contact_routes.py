@@ -229,6 +229,16 @@ def test_invalid_auth_and_duplicate_idempotency_headers_do_not_reach_writer() ->
             ],
             json=body(),
         )
+        blank = client.post(
+            "/contact",
+            headers={"token": "token-a", "Idempotency-Key": "   "},
+            json=body(),
+        )
+        too_long = client.post(
+            "/contact",
+            headers={"token": "token-a", "Idempotency-Key": "x" * 129},
+            json=body(),
+        )
 
     assert denied.json() == {
         "status": "error",
@@ -238,14 +248,18 @@ def test_invalid_auth_and_duplicate_idempotency_headers_do_not_reach_writer() ->
         "status": "error",
         "errors": [{"code": 422, "message": "Request is not valid"}],
     }
+    assert blank.json() == duplicate.json()
+    assert too_long.json() == duplicate.json()
     assert uuid.UUID(denied.headers["X-Request-ID"])
     assert uuid.UUID(duplicate.headers["X-Request-ID"])
+    assert uuid.UUID(blank.headers["X-Request-ID"])
+    assert uuid.UUID(too_long.headers["X-Request-ID"])
     assert writer.calls == []
 
 
-def test_idempotency_key_is_opaque_and_has_no_application_format_limit() -> None:
+def test_idempotency_key_content_is_opaque_within_documented_length_limit() -> None:
     client, writer = make_client()
-    opaque_key = "person@example.invalid bearer-secret-sentinel " + ("x" * 512)
+    opaque_key = "person@example.invalid bearer-secret-sentinel :/[]{}"
 
     with client:
         response = client.post(

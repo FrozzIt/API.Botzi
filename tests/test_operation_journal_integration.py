@@ -5,11 +5,13 @@ import os
 import uuid
 
 import pytest
+from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from proxy_api.auth.service import AuthenticatedSession
-from proxy_api.database import OperationJournal
+from proxy_api.database import ConfigState, OperationJournal
 from proxy_api.operations import (
+    OperationDigestKeyMismatch,
     OperationJournalService,
     OperationState,
     OperationTransitionRejected,
@@ -41,10 +43,11 @@ def journal(
     session_factory: async_sessionmaker[AsyncSession],
     *,
     pending_lease_seconds: float = 5,
+    digest_secret: bytes = TEST_DIGEST_SECRET,
 ) -> OperationJournalService:
     return OperationJournalService(
         session_factory,
-        digest_secret=TEST_DIGEST_SECRET,
+        digest_secret=digest_secret,
         pending_lease_seconds=pending_lease_seconds,
     )
 
@@ -53,10 +56,36 @@ def payload(marker: str) -> dict[str, object]:
     return {"project_id": 10001, "name": marker}
 
 
+async def reset_journal_database(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session, session.begin():
+        await session.execute(delete(OperationJournal))
+        await session.execute(delete(ConfigState))
+        session.add(
+            ConfigState(
+                id=1,
+                schema_version=1,
+                revision=1,
+                content_digest="0" * 64,
+            )
+        )
+
+
+async def clear_journal_database(
+    session_factory: async_sessionmaker[AsyncSession],
+) -> None:
+    async with session_factory() as session, session.begin():
+        await session.execute(delete(OperationJournal))
+        await session.execute(delete(ConfigState))
+
+
 @pytest.mark.asyncio
 async def test_concurrent_same_key_has_one_executor_and_payload_conflict() -> None:
     engine = create_async_engine(require_database_url())
-    service = journal(async_sessionmaker(engine, expire_on_commit=False))
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await reset_journal_database(session_factory)
+    service = journal(session_factory)
     current_access = access(f"journal-{uuid.uuid4().hex}")
     try:
         claims = await asyncio.gather(
@@ -79,6 +108,7 @@ async def test_concurrent_same_key_has_one_executor_and_payload_conflict() -> No
             payload=payload("different"),
         )
     finally:
+        await clear_journal_database(session_factory)
         await engine.dispose()
 
     assert sum(item.execute for item in claims) == 1
@@ -93,10 +123,12 @@ async def test_pending_is_live_within_lease_then_becomes_unknown_after_restart()
     database_url = require_database_url()
     current_access = access(f"journal-{uuid.uuid4().hex}")
     first_engine = create_async_engine(database_url)
+    first_session_factory = async_sessionmaker(first_engine, expire_on_commit=False)
     first = journal(
-        async_sessionmaker(first_engine, expire_on_commit=False),
+        first_session_factory,
         pending_lease_seconds=0.5,
     )
+    await reset_journal_database(first_session_factory)
     pending = await first.begin(
         current_access,
         request_id=uuid.uuid4(),
@@ -166,6 +198,7 @@ async def test_pending_is_live_within_lease_then_becomes_unknown_after_restart()
             payload=payload("pending"),
         )
     finally:
+        await clear_journal_database(async_sessionmaker(restarted_engine, expire_on_commit=False))
         await restarted_engine.dispose()
 
     assert pending.execute is True
@@ -187,10 +220,11 @@ async def test_pending_is_live_within_lease_then_becomes_unknown_after_restart()
 async def test_success_and_failed_state_are_durable_and_no_key_is_not_deduplicated() -> None:
     engine = create_async_engine(require_database_url())
     session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await reset_journal_database(session_factory)
     service = journal(session_factory)
     current_access = access(f"journal-{uuid.uuid4().hex}")
     try:
-        opaque_key = "person@example.invalid bearer-secret-sentinel " + ("x" * 512)
+        opaque_key = "person@example.invalid bearer-secret-sentinel"
         succeeded = await service.begin(
             current_access,
             request_id=uuid.uuid4(),
@@ -244,6 +278,7 @@ async def test_success_and_failed_state_are_durable_and_no_key_is_not_deduplicat
         async with session_factory() as session:
             stored = await session.get(OperationJournal, succeeded.record.request_id)
     finally:
+        await clear_journal_database(session_factory)
         await engine.dispose()
 
     assert replayed.execute is False
@@ -260,3 +295,47 @@ async def test_success_and_failed_state_are_durable_and_no_key_is_not_deduplicat
     assert "person@example.invalid" not in stored.idempotency_digest
     assert "bearer-secret-sentinel" not in stored.idempotency_digest
     assert not hasattr(stored, "idempotency_key")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("initial_state", [OperationState.SUCCEEDED, OperationState.UNKNOWN])
+async def test_changed_digest_secret_fails_closed_without_a_second_record(
+    initial_state: OperationState,
+) -> None:
+    engine = create_async_engine(require_database_url())
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await reset_journal_database(session_factory)
+    first = journal(session_factory, digest_secret=b"first-operation-journal-secret")
+    rotated = journal(session_factory, digest_secret=b"rotated-operation-journal-secret")
+    current_access = access(f"journal-{uuid.uuid4().hex}")
+    try:
+        begun = await first.begin(
+            current_access,
+            request_id=uuid.uuid4(),
+            operation="C02",
+            idempotency_key="stable-key",
+            payload=payload("stable"),
+        )
+        await first.mark_dispatch_started(begun.record.request_id)
+        if initial_state is OperationState.SUCCEEDED:
+            await first.mark_succeeded(
+                begun.record.request_id,
+                {"id": 20001, "project_id": 10001},
+            )
+
+        with pytest.raises(OperationDigestKeyMismatch):
+            await rotated.begin(
+                current_access,
+                request_id=uuid.uuid4(),
+                operation="C02",
+                idempotency_key="stable-key",
+                payload=payload("stable"),
+            )
+
+        async with session_factory() as session:
+            record_count = await session.scalar(select(func.count()).select_from(OperationJournal))
+    finally:
+        await clear_journal_database(session_factory)
+        await engine.dispose()
+
+    assert record_count == 1

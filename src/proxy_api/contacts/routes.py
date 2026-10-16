@@ -10,7 +10,7 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 from proxy_api.config import get_settings
 from proxy_api.contacts.service import ContactCreateOutcome, ContactCreateState, ContactWriter
 from proxy_api.infrastructure import get_session_factory
-from proxy_api.operations import OperationJournalService
+from proxy_api.operations import IDEMPOTENCY_KEY_MAX_LENGTH, OperationJournalService
 from proxy_api.projects.routes import (
     AuthenticatedSessionDependency,
     ProviderAccountDependency,
@@ -137,7 +137,11 @@ async def create_contact(
     if payload.project_id is not None and payload.project_id != access.project_id:
         return project_not_found_error()
     if idempotency_keys is not None:
-        if len(idempotency_keys) != 1:
+        if (
+            len(idempotency_keys) != 1
+            or not idempotency_keys[0].strip()
+            or len(idempotency_keys[0]) > IDEMPOTENCY_KEY_MAX_LENGTH
+        ):
             return request_invalid_error()
         idempotency_key = idempotency_keys[0]
     else:

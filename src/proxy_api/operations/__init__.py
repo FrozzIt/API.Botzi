@@ -1,5 +1,7 @@
 from proxy_api.operations.journal import (
+    IDEMPOTENCY_KEY_MAX_LENGTH,
     BeginOperation,
+    OperationDigestKeyMismatch,
     OperationJournalService,
     OperationRecord,
     OperationState,
@@ -10,6 +12,8 @@ from proxy_api.operations.journal import (
 
 __all__ = [
     "BeginOperation",
+    "IDEMPOTENCY_KEY_MAX_LENGTH",
+    "OperationDigestKeyMismatch",
     "OperationJournalService",
     "OperationRecord",
     "OperationState",

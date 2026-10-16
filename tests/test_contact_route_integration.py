@@ -12,7 +12,7 @@ import pytest
 from cryptography.fernet import Fernet
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
-from sqlalchemy import delete, update
+from sqlalchemy import delete, func, select, update
 from sqlalchemy.ext.asyncio import create_async_engine
 
 from proxy_api.auth.routes import get_login_attempt_limiter
@@ -107,6 +107,16 @@ async def set_client_project(project_id: int) -> None:
         await engine.dispose()
 
 
+async def operation_count() -> int:
+    engine = create_async_engine(require_database_url())
+    try:
+        async with engine.connect() as connection:
+            value = await connection.scalar(select(func.count()).select_from(OperationJournal))
+            return int(value or 0)
+    finally:
+        await engine.dispose()
+
+
 def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
     caplog: pytest.LogCaptureFixture,
 ) -> None:
@@ -122,6 +132,7 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
         )
     )
     mode = "success"
+    digest_secret = b"contact-route-integration-secret"
     contact_posts = 0
 
     async def handler(request: httpx.Request) -> httpx.Response:
@@ -183,7 +194,7 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
         return ContactWriter(
             OperationJournalService(
                 session_factory,
-                digest_secret=b"contact-route-integration-secret",
+                digest_secret=digest_secret,
                 pending_lease_seconds=3,
             ),
             DetailOwnershipStore(session_factory),
@@ -209,6 +220,22 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
     try:
         with TestClient(application) as client:
             token = client.post("/login", json=login_body).json()["result"]["token"]
+            blank = client.post(
+                "/contact",
+                headers={"token": token, "Idempotency-Key": "   "},
+                json=contact_body,
+            )
+            too_long = client.post(
+                "/contact",
+                headers={"token": token, "Idempotency-Key": "x" * 129},
+                json=contact_body,
+            )
+
+            assert blank.json()["errors"][0]["code"] == 422
+            assert too_long.json()["errors"][0]["code"] == 422
+            assert contact_posts == 0
+            assert asyncio.run(operation_count()) == 0
+
             pii_like_key = "person@example.invalid bearer-secret-sentinel"
             headers = {"token": token, "Idempotency-Key": pii_like_key}
 
@@ -220,10 +247,28 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
             assert replay.headers["X-Request-ID"] == first.headers["X-Request-ID"]
             assert contact_posts == 1
 
+            digest_secret = b"rotated-contact-route-integration-secret"
+            rejected_rotated_success = client.post(
+                "/contact",
+                headers=headers,
+                json=contact_body,
+            )
+            digest_secret = b"contact-route-integration-secret"
+
+            assert rejected_rotated_success.json()["errors"][0]["code"] == 503
+            assert contact_posts == 1
+
             mode = "timeout"
             unknown_headers = {"token": token, "Idempotency-Key": "route-unknown-key"}
             unknown = client.post("/contact", headers=unknown_headers, json=contact_body)
             mode = "success"
+            digest_secret = b"rotated-contact-route-integration-secret"
+            rejected_rotated_unknown = client.post(
+                "/contact",
+                headers=unknown_headers,
+                json=contact_body,
+            )
+            digest_secret = b"contact-route-integration-secret"
             unknown_replay = client.post(
                 "/contact",
                 headers=unknown_headers,
@@ -231,6 +276,7 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
             )
 
             assert unknown.json()["errors"][0]["code"] == 520
+            assert rejected_rotated_unknown.json()["errors"][0]["code"] == 503
             assert unknown_replay.json() == unknown.json()
             assert unknown_replay.headers["X-Request-ID"] == unknown.headers["X-Request-ID"]
             assert contact_posts == 2
