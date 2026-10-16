@@ -3,12 +3,14 @@ from __future__ import annotations
 import asyncio
 import os
 import uuid
+from datetime import UTC, datetime
 
 import pytest
 from sqlalchemy import delete, func, select
 from sqlalchemy.ext.asyncio import AsyncSession, async_sessionmaker, create_async_engine
 
 from proxy_api.auth.service import AuthenticatedSession
+from proxy_api.contacts.service import ContactCreateState, ContactWriter
 from proxy_api.database import ConfigState, OperationJournal
 from proxy_api.operations import (
     OperationDigestKeyMismatch,
@@ -16,6 +18,7 @@ from proxy_api.operations import (
     OperationState,
     OperationTransitionRejected,
 )
+from proxy_api.reads.detail_ownership import VerifiedContact
 
 pytestmark = pytest.mark.integration
 TEST_DIGEST_SECRET = b"operation-journal-integration-secret"
@@ -78,6 +81,38 @@ async def clear_journal_database(
     async with session_factory() as session, session.begin():
         await session.execute(delete(OperationJournal))
         await session.execute(delete(ConfigState))
+
+
+class BlockingBeforeSendProvider:
+    def __init__(self) -> None:
+        self.before_send_ready = asyncio.Event()
+        self.release_before_send = asyncio.Event()
+        self.calls = 0
+
+    async def post_once(
+        self,
+        path: str,
+        *,
+        json_body: dict[str, object],
+        before_send: object,
+        deadline_seconds: float | None = None,
+    ) -> object:
+        del path, json_body, deadline_seconds
+        self.before_send_ready.set()
+        await self.release_before_send.wait()
+        await before_send()  # type: ignore[operator]
+        self.calls += 1
+        raise AssertionError("Expired operation must not reach provider POST")
+
+
+class UnusedOwnershipStore:
+    async def sync_verified_contacts(
+        self,
+        provider_account: str,
+        contacts: list[VerifiedContact],
+    ) -> None:
+        del provider_account, contacts
+        raise AssertionError("Expired operation must not update ownership")
 
 
 @pytest.mark.asyncio
@@ -214,6 +249,56 @@ async def test_pending_is_live_within_lease_then_becomes_unknown_after_restart()
     assert crash_replay.record.request_id == crashed.record.request_id
     assert unknown_replay.execute is False
     assert unknown_replay.record.state is OperationState.UNKNOWN
+
+
+@pytest.mark.asyncio
+async def test_lease_expiring_while_row_lock_waits_becomes_unknown_without_post() -> None:
+    engine = create_async_engine(require_database_url())
+    session_factory = async_sessionmaker(engine, expire_on_commit=False)
+    await reset_journal_database(session_factory)
+    service = journal(session_factory, pending_lease_seconds=1)
+    provider = BlockingBeforeSendProvider()
+    writer = ContactWriter(service, UnusedOwnershipStore())  # type: ignore[arg-type]
+    current_access = access(f"journal-{uuid.uuid4().hex}")
+    request_id = uuid.uuid4()
+    try:
+        pending = asyncio.create_task(
+            writer.create(
+                current_access,
+                provider,  # type: ignore[arg-type]
+                request_id=request_id,
+                provider_account=current_access.provider_account,
+                idempotency_key="lock-expiry-key",
+                name="Synthetic Contact",
+                detail_type="email",
+                detail_data="contact@example.invalid",
+            )
+        )
+        await asyncio.wait_for(provider.before_send_ready.wait(), timeout=1)
+        async with session_factory() as blocker, blocker.begin():
+            locked = await blocker.scalar(
+                select(OperationJournal)
+                .where(OperationJournal.request_id == request_id)
+                .with_for_update()
+            )
+            assert locked is not None
+            checked_at = datetime.now(UTC)
+            assert locked.pending_expires_at > checked_at
+            provider.release_before_send.set()
+            await asyncio.sleep((locked.pending_expires_at - checked_at).total_seconds() + 0.05)
+
+        outcome = await asyncio.wait_for(pending, timeout=1)
+        async with session_factory() as session:
+            stored = await session.get(OperationJournal, request_id)
+    finally:
+        await clear_journal_database(session_factory)
+        await engine.dispose()
+
+    assert outcome.state is ContactCreateState.UNKNOWN
+    assert provider.calls == 0
+    assert stored is not None
+    assert stored.state == OperationState.UNKNOWN.value
+    assert stored.dispatch_started_at is None
 
 
 @pytest.mark.asyncio

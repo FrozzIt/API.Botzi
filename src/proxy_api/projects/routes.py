@@ -129,7 +129,7 @@ def provider_unavailable_error() -> JSONResponse:
     )
 
 
-def _validate_project_query(
+def validate_project_query(
     request: Request,
     expected_project_id: int | None,
 ) -> None:
@@ -197,7 +197,7 @@ async def projects(
     provider_account: ProviderAccountDependency,
 ) -> JSONResponse:
     try:
-        _validate_project_query(request, None)
+        validate_project_query(request, None)
         project = await read_allowed_project(
             access,
             provider,
@@ -220,7 +220,7 @@ async def project(
     provider_account: ProviderAccountDependency,
 ) -> JSONResponse:
     try:
-        _validate_project_query(request, project_id)
+        validate_project_query(request, project_id)
         result = await read_allowed_project(access, provider, provider_account, project_id)
     except LookupError:
         return project_not_found_error()

@@ -302,6 +302,23 @@ async def test_timeout_after_send_is_unknown_and_never_replayed() -> None:
 
 
 @pytest.mark.asyncio
+async def test_auth_failure_after_send_is_unknown_and_never_replayed() -> None:
+    journal = FakeJournal()
+    provider = FakeProvider()
+    provider.error_after_send = ClientAuthenticationError()
+    writer = ContactWriter(journal, FakeOwnershipStore())  # type: ignore[arg-type]
+
+    first = await create(writer, provider)
+    replay = await create(writer, provider)
+
+    assert first.state is ContactCreateState.UNKNOWN
+    assert replay.state is ContactCreateState.UNKNOWN
+    assert replay.request_id == first.request_id
+    assert len(provider.calls) == 1
+    assert [state for state, _ in journal.transitions] == ["unknown"]
+
+
+@pytest.mark.asyncio
 async def test_pre_send_failure_is_durable_failed_without_post() -> None:
     journal = FakeJournal()
     provider = FakeProvider()

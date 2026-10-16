@@ -198,6 +198,9 @@ class LPTrackerAdapter:
                 raise ProviderDeadlineExceeded("Provider deadline exceeded")
             if before_send is not None:
                 await before_send()
+                remaining = deadline - asyncio.get_running_loop().time()
+                if remaining <= 0:
+                    raise ProviderDeadlineExceeded("Provider deadline exceeded")
             request = self._http.build_request(
                 method,
                 path,

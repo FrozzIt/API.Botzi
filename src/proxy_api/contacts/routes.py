@@ -17,6 +17,7 @@ from proxy_api.projects.routes import (
     ProviderDependency,
     project_not_found_error,
     provider_unavailable_error,
+    validate_project_query,
 )
 from proxy_api.provider import ProviderError
 from proxy_api.reads.detail_ownership import DetailOwnershipStore
@@ -134,6 +135,10 @@ async def create_contact(
         Header(alias="Idempotency-Key"),
     ] = None,
 ) -> JSONResponse:
+    try:
+        validate_project_query(request, access.project_id)
+    except LookupError:
+        return project_not_found_error()
     if payload.project_id is not None and payload.project_id != access.project_id:
         return project_not_found_error()
     if idempotency_keys is not None:

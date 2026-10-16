@@ -200,29 +200,26 @@ class OperationJournalService:
             raise OperationDigestKeyMismatch("Operation journal digest key does not match")
 
     async def mark_dispatch_started(self, request_id: uuid.UUID) -> None:
-        now = datetime.now(UTC)
-        try:
-            await self._transition(
-                request_id,
-                expected=OperationState.PENDING,
-                target=OperationState.UNKNOWN,
-                dispatch_started_at=now,
+        rejected = False
+        async with self._session_factory() as session, session.begin():
+            row = await session.scalar(
+                select(OperationJournal)
+                .where(OperationJournal.request_id == request_id)
+                .with_for_update()
             )
-        except OperationTransitionRejected:
-            async with self._session_factory() as session, session.begin():
-                await session.execute(
-                    update(OperationJournal)
-                    .where(
-                        OperationJournal.request_id == request_id,
-                        OperationJournal.state == OperationState.PENDING.value,
-                        OperationJournal.pending_expires_at <= now,
-                    )
-                    .values(
-                        state=OperationState.UNKNOWN.value,
-                        updated_at=now,
-                    )
-                )
-            raise
+            checked_at = datetime.now(UTC)
+            if row is None or row.state != OperationState.PENDING.value:
+                rejected = True
+            elif row.pending_expires_at <= checked_at:
+                row.state = OperationState.UNKNOWN.value
+                row.updated_at = checked_at
+                rejected = True
+            else:
+                row.state = OperationState.UNKNOWN.value
+                row.dispatch_started_at = checked_at
+                row.updated_at = checked_at
+        if rejected:
+            raise OperationTransitionRejected("Operation journal state transition was rejected")
 
     async def mark_failed_before_send(self, request_id: uuid.UUID) -> None:
         await self._transition(
@@ -250,7 +247,6 @@ class OperationJournalService:
         expected: OperationState,
         target: OperationState,
         safe_result: dict[str, object] | None = None,
-        dispatch_started_at: datetime | None = None,
     ) -> None:
         values: dict[str, object] = {
             "state": target.value,
@@ -258,17 +254,11 @@ class OperationJournalService:
         }
         if safe_result is not None:
             values["safe_result"] = safe_result
-        if dispatch_started_at is not None:
-            values["dispatch_started_at"] = dispatch_started_at
         async with self._session_factory() as session, session.begin():
             statement = update(OperationJournal).where(
                 OperationJournal.request_id == request_id,
                 OperationJournal.state == expected.value,
             )
-            if dispatch_started_at is not None:
-                statement = statement.where(
-                    OperationJournal.pending_expires_at > dispatch_started_at
-                )
             result = await session.execute(statement.values(**values))
             if result.rowcount != 1:
                 raise OperationTransitionRejected("Operation journal state transition was rejected")

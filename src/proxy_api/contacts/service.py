@@ -130,8 +130,9 @@ class ContactWriter:
             )
             await self._journal.mark_succeeded(record.request_id, safe_result)
         except ClientAuthenticationError:
-            if not dispatch_started:
-                await self._mark_failed(record.request_id)
+            if dispatch_started:
+                return ContactCreateOutcome(record.request_id, ContactCreateState.UNKNOWN)
+            await self._mark_failed(record.request_id)
             raise
         except OperationTransitionRejected:
             return ContactCreateOutcome(record.request_id, ContactCreateState.UNKNOWN)

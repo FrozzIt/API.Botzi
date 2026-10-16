@@ -211,6 +211,37 @@ def test_foreign_project_and_unknown_relations_are_rejected_before_writer() -> N
     assert writer.calls == []
 
 
+def test_project_query_is_checked_before_writer() -> None:
+    client, writer = make_client()
+
+    with client:
+        foreign = client.post(
+            "/contact?project_id=10002",
+            headers={"token": "token-a"},
+            json=body(),
+        )
+        conflicting = client.post(
+            "/contact?project_id=10002",
+            headers={"token": "token-a"},
+            json=body(10001),
+        )
+        repeated = client.post(
+            "/contact",
+            params=[("project_id", "10001"), ("project_id", "10001")],
+            headers={"token": "token-a"},
+            json=body(),
+        )
+
+    expected = {
+        "status": "error",
+        "errors": [{"code": 404, "message": "Project not found"}],
+    }
+    assert foreign.json() == expected
+    assert conflicting.json() == expected
+    assert repeated.json() == expected
+    assert writer.calls == []
+
+
 def test_invalid_auth_and_duplicate_idempotency_headers_do_not_reach_writer() -> None:
     client, writer = make_client()
 

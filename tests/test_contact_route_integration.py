@@ -4,18 +4,23 @@ import asyncio
 import json
 import os
 import uuid
+from collections.abc import AsyncIterator
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import asynccontextmanager
 from threading import Event
 
 import httpx
 import pytest
 from cryptography.fernet import Fernet
+from fastapi import Request
 from fastapi.testclient import TestClient
 from redis.asyncio import Redis
 from sqlalchemy import delete, func, select, update
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.ext.asyncio import create_async_engine
 
-from proxy_api.auth.routes import get_login_attempt_limiter
+from proxy_api.auth.routes import get_auth_service, get_login_attempt_limiter
+from proxy_api.auth.service import AuthenticatedSession, AuthService
 from proxy_api.contacts.routes import get_contact_writer
 from proxy_api.contacts.service import ContactWriter
 from proxy_api.database import (
@@ -61,6 +66,37 @@ class ControlledQuota:
             if not await asyncio.to_thread(release_wait.wait, 1):
                 raise AssertionError("Controlled quota wait was not released")
         await self._delegate.acquire(deadline)
+
+
+class GuardFailureControl:
+    def __init__(self) -> None:
+        self.fail_after_exit = False
+
+
+class ControlledGuardAuthService:
+    def __init__(self, delegate: AuthService, control: GuardFailureControl) -> None:
+        self._delegate = delegate
+        self._control = control
+
+    async def login(self, **kwargs: str) -> str:
+        return await self._delegate.login(**kwargs)
+
+    async def authenticate(self, token: str) -> AuthenticatedSession:
+        return await self._delegate.authenticate(token)
+
+    async def logout(self, token: str) -> None:
+        await self._delegate.logout(token)
+
+    @asynccontextmanager
+    async def provider_request_guard(
+        self,
+        access: AuthenticatedSession,
+    ) -> AsyncIterator[None]:
+        async with self._delegate.provider_request_guard(access):
+            yield
+        if self._control.fail_after_exit:
+            self._control.fail_after_exit = False
+            raise SQLAlchemyError("synthetic guard completion failure")
 
 
 def require_database_url() -> str:
@@ -134,6 +170,7 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
     mode = "success"
     digest_secret = b"contact-route-integration-secret"
     contact_posts = 0
+    guard_failure = GuardFailureControl()
 
     async def handler(request: httpx.Request) -> httpx.Response:
         nonlocal contact_posts
@@ -201,6 +238,11 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
         )
 
     application = create_app()
+
+    def controlled_auth_service(request: Request) -> ControlledGuardAuthService:
+        return ControlledGuardAuthService(get_auth_service(request), guard_failure)
+
+    application.dependency_overrides[get_auth_service] = controlled_auth_service
     application.dependency_overrides[get_login_attempt_limiter] = AllowingLimiter
     application.dependency_overrides[get_provider_adapter] = lambda: adapter
     application.dependency_overrides[get_configured_provider_account] = lambda: "primary"
@@ -233,6 +275,29 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
 
             assert blank.json()["errors"][0]["code"] == 422
             assert too_long.json()["errors"][0]["code"] == 422
+            assert contact_posts == 0
+            assert asyncio.run(operation_count()) == 0
+
+            foreign_query = client.post(
+                "/contact?project_id=10002",
+                headers={"token": token, "Idempotency-Key": "query-foreign-key"},
+                json=contact_body,
+            )
+            conflicting_query = client.post(
+                "/contact?project_id=10002",
+                headers={"token": token, "Idempotency-Key": "query-conflict-key"},
+                json={**contact_body, "project_id": 10001},
+            )
+            repeated_query = client.post(
+                "/contact",
+                params=[("project_id", "10001"), ("project_id", "10001")],
+                headers={"token": token, "Idempotency-Key": "query-repeat-key"},
+                json=contact_body,
+            )
+
+            assert foreign_query.json()["errors"][0]["code"] == 404
+            assert conflicting_query.json()["errors"][0]["code"] == 404
+            assert repeated_query.json()["errors"][0]["code"] == 404
             assert contact_posts == 0
             assert asyncio.run(operation_count()) == 0
 
@@ -281,6 +346,24 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
             assert unknown_replay.headers["X-Request-ID"] == unknown.headers["X-Request-ID"]
             assert contact_posts == 2
 
+            guard_failure.fail_after_exit = True
+            guard_headers = {"token": token, "Idempotency-Key": "route-guard-exit-key"}
+            guard_failed = client.post(
+                "/contact",
+                headers=guard_headers,
+                json=contact_body,
+            )
+            guard_replay = client.post(
+                "/contact",
+                headers=guard_headers,
+                json=contact_body,
+            )
+
+            assert guard_failed.json()["errors"][0]["code"] == 520
+            assert guard_replay.json() == guard_failed.json()
+            assert guard_replay.headers["X-Request-ID"] == guard_failed.headers["X-Request-ID"]
+            assert contact_posts == 3
+
             wait_started, release_wait = quota.block_next()
             with ThreadPoolExecutor(max_workers=1) as executor:
                 pending = executor.submit(
@@ -297,7 +380,7 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
                 rejected_after_logout = pending.result(timeout=2)
 
             assert rejected_after_logout.json()["errors"][0]["code"] == 401
-            assert contact_posts == 2
+            assert contact_posts == 3
 
             token = client.post("/login", json=login_body).json()["result"]["token"]
             wait_started, release_wait = quota.block_next()
@@ -314,7 +397,7 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
                 rejected_after_reassignment = pending.result(timeout=2)
 
             assert rejected_after_reassignment.json()["errors"][0]["code"] == 401
-            assert contact_posts == 2
+            assert contact_posts == 3
             assert pii_like_key not in caplog.text
 
             client.portal.call(adapter.aclose)
