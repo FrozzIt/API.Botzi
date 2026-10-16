@@ -96,11 +96,13 @@ async def set_client_project(project_id: int) -> None:
     engine = create_async_engine(require_database_url())
     try:
         async with engine.begin() as connection:
-            await connection.execute(
+            result = await connection.execute(
                 update(AuthClient)
-                .where(AuthClient.client_key == "client_a")
+                .where(AuthClient.client_key == "synthetic_a")
                 .values(project_id=project_id)
             )
+            if result.rowcount != 1:
+                raise AssertionError("Synthetic client project was not updated")
     finally:
         await engine.dispose()
 
