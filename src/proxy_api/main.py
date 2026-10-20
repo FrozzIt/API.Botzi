@@ -69,11 +69,13 @@ def create_app() -> FastAPI:
         request: Request,
         call_next: Callable[[Request], Awaitable[Response]],
     ) -> Response:
-        is_contact_create = request.method == "POST" and request.url.path == "/contact"
-        if is_contact_create:
+        is_contact_write = request.method in {"POST", "PUT", "DELETE"} and (
+            request.url.path == "/contact" or request.url.path.startswith("/contact/")
+        )
+        if is_contact_write:
             request.state.operation_request_id = uuid.uuid4()
         response = await call_next(request)
-        if is_contact_create and "X-Request-ID" not in response.headers:
+        if is_contact_write and "X-Request-ID" not in response.headers:
             response.headers["X-Request-ID"] = str(request.state.operation_request_id)
         return response
 

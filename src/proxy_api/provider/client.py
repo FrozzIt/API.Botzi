@@ -124,6 +124,27 @@ class LPTrackerAdapter:
         deadline_seconds: float | None = None,
         send_guard: ProviderSendGuard | None = None,
     ) -> dict[str, Any] | list[Any]:
+        return await self.write_once(
+            "POST",
+            path,
+            json_body=json_body,
+            before_send=before_send,
+            deadline_seconds=deadline_seconds,
+            send_guard=send_guard,
+        )
+
+    async def write_once(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Mapping[str, object] | None,
+        before_send: ProviderBeforeSend,
+        deadline_seconds: float | None = None,
+        send_guard: ProviderSendGuard | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        if method not in {"POST", "PUT", "PATCH", "DELETE"}:
+            raise ValueError("Provider write method is not allowed")
         if not path.startswith("/") or path.startswith("//"):
             raise ValueError("Provider path must be relative to the configured host")
         budget = self._default_deadline_seconds if deadline_seconds is None else deadline_seconds
@@ -138,7 +159,7 @@ class LPTrackerAdapter:
 
                 token = await self._tokens.current_or_refresh(guarded_login, deadline)
                 return await self._request(
-                    "POST",
+                    method,
                     path,
                     deadline=deadline,
                     token=token.value,

@@ -95,6 +95,24 @@ class AuthorizedProvider:
             send_guard=self._send_guard,
         )
 
+    async def write_once(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: Mapping[str, object] | None,
+        before_send: Callable[[], Awaitable[None]],
+        deadline_seconds: float | None = None,
+    ) -> dict[str, Any] | list[Any]:
+        return await self._provider.write_once(
+            method,
+            path,
+            json_body=json_body,
+            before_send=before_send,
+            deadline_seconds=deadline_seconds,
+            send_guard=self._send_guard,
+        )
+
     async def recheck_access(self) -> None:
         async with self._send_guard():
             pass
