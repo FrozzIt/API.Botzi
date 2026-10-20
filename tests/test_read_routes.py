@@ -1667,8 +1667,10 @@ async def test_detail_guard_fails_closed_when_store_is_unavailable() -> None:
     assert provider.calls == []
 
 
-def test_public_detail_routes_remain_closed() -> None:
+def test_public_contact_operation_routes_are_registered() -> None:
     application = create_app()
     route_paths = {getattr(route, "path", None) for route in application.routes}
 
-    assert "/contact/details/{detail_id}" not in route_paths
+    assert "/contact/details/{detail_id}" in route_paths
+    assert "/contact/{contact_id}/leads" in route_paths
+    assert "/contact/{contact_id}/field/{field_id}" in route_paths

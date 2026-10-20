@@ -21,8 +21,8 @@ from sqlalchemy.ext.asyncio import create_async_engine
 
 from proxy_api.auth.routes import get_auth_service, get_login_attempt_limiter
 from proxy_api.auth.service import AuthenticatedSession, AuthService
-from proxy_api.contacts.routes import get_contact_writer
-from proxy_api.contacts.service import ContactWriter
+from proxy_api.contacts.routes import get_contact_mutation_writer, get_contact_writer
+from proxy_api.contacts.service import ContactMutationWriter, ContactWriter
 from proxy_api.database import (
     AuthClient,
     AuthSession,
@@ -170,17 +170,82 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
     mode = "success"
     digest_secret = b"contact-route-integration-secret"
     contact_posts = 0
+    detail_puts = 0
+    field_deletes = 0
+    detail_value = "contact@example.invalid"
     guard_failure = GuardFailureControl()
 
     async def handler(request: httpx.Request) -> httpx.Response:
-        nonlocal contact_posts
+        nonlocal contact_posts, detail_puts, field_deletes, detail_value
         if request.url.path == "/login":
             return httpx.Response(
                 200,
                 json={"status": "success", "result": {"token": "synthetic-provider-token"}},
             )
-        if request.url.path != "/contact":
-            raise AssertionError("Unexpected provider path")
+        if request.method == "GET" and request.url.path == "/contact/20001":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "result": {
+                        "id": 20001,
+                        "project_id": 10001,
+                        "name": "Synthetic Contact",
+                        "details": [{"id": 21001, "type": "email", "data": detail_value}],
+                        "fields": [],
+                    },
+                },
+            )
+        if request.method == "GET" and request.url.path == "/contact/details/21001":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "result": {"id": 21001, "type": "email", "data": detail_value},
+                },
+            )
+        if request.method == "PUT" and request.url.path == "/contact/details/21001":
+            detail_puts += 1
+            detail_value = json.loads(request.content)["value"]
+            result = {"id": 21001, "type": "email", "data": detail_value}
+            if mode == "foreign_detail_response":
+                result["project_id"] = 10002
+                result["contact_id"] = 20002
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "result": result,
+                },
+            )
+        if request.method == "GET" and request.url.path == "/contact/20001/leads":
+            return httpx.Response(200, json={"status": "success", "result": []})
+        if request.method == "GET" and request.url.path == "/project/10001/fields":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "result": [{"id": 31001, "name": "Safe field", "type": "string"}],
+                },
+            )
+        if request.method == "GET" and request.url.path == "/contact/20001/field/31001":
+            return httpx.Response(
+                200,
+                json={
+                    "status": "success",
+                    "result": {
+                        "id": 31001,
+                        "name": "Safe field",
+                        "type": "string",
+                        "value": "safe",
+                    },
+                },
+            )
+        if request.method == "DELETE" and request.url.path == "/contact/20001/field/31001":
+            field_deletes += 1
+            return httpx.Response(200, json={"status": "success"})
+        if request.method != "POST" or request.url.path != "/contact":
+            raise AssertionError(f"Unexpected provider request: {request.method}")
         contact_posts += 1
         if mode == "timeout":
             raise httpx.ReadTimeout("synthetic timeout", request=request)
@@ -237,6 +302,15 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
             DetailOwnershipStore(session_factory),
         )
 
+    def mutation_writer() -> ContactMutationWriter:
+        return ContactMutationWriter(
+            OperationJournalService(
+                get_session_factory(),
+                digest_secret=digest_secret,
+                pending_lease_seconds=3,
+            )
+        )
+
     application = create_app()
 
     def controlled_auth_service(request: Request) -> ControlledGuardAuthService:
@@ -247,6 +321,7 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
     application.dependency_overrides[get_provider_adapter] = lambda: adapter
     application.dependency_overrides[get_configured_provider_account] = lambda: "primary"
     application.dependency_overrides[get_contact_writer] = writer
+    application.dependency_overrides[get_contact_mutation_writer] = mutation_writer
 
     login_body = {
         "login": "synthetic_a",
@@ -311,6 +386,80 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
             assert replay.json() == first.json()
             assert replay.headers["X-Request-ID"] == first.headers["X-Request-ID"]
             assert contact_posts == 1
+
+            detail = client.get("/contact/details/21001", headers={"token": token})
+            detail_headers = {
+                "token": token,
+                "Idempotency-Key": "route-detail-edit-key",
+            }
+            detail_edit = client.put(
+                "/contact/details/21001",
+                headers=detail_headers,
+                json={"value": "changed@example.invalid"},
+            )
+            detail_replay = client.put(
+                "/contact/details/21001",
+                headers=detail_headers,
+                json={"value": "changed@example.invalid"},
+            )
+            leads = client.get("/contact/20001/leads", headers={"token": token})
+            field = client.get("/contact/20001/field/31001", headers={"token": token})
+            field_headers = {
+                "token": token,
+                "Idempotency-Key": "route-field-clear-key",
+            }
+            field_clear = client.delete(
+                "/contact/20001/field/31001",
+                headers=field_headers,
+            )
+            field_replay = client.delete(
+                "/contact/20001/field/31001",
+                headers=field_headers,
+            )
+            provider_calls_before_deferred = contact_posts + detail_puts + field_deletes
+            deferred = client.delete(
+                "/contact/details/21001",
+                headers={"token": token},
+            )
+
+            assert detail.json()["result"]["data"] == "contact@example.invalid"
+            assert detail_edit.json()["result"]["data"] == "changed@example.invalid"
+            assert detail_replay.json() == detail_edit.json()
+            assert detail_replay.headers["X-Request-ID"] == detail_edit.headers["X-Request-ID"]
+            assert detail_puts == 1
+            assert leads.json() == {"status": "success", "result": []}
+            assert field.json()["result"]["value"] == "safe"
+            assert field_clear.json() == {"status": "success"}
+            assert field_replay.json() == field_clear.json()
+            assert field_replay.headers["X-Request-ID"] == field_clear.headers["X-Request-ID"]
+            assert field_deletes == 1
+            assert deferred.json()["errors"][0]["code"] == 501
+            assert contact_posts + detail_puts + field_deletes == provider_calls_before_deferred
+
+            mode = "foreign_detail_response"
+            foreign_detail_headers = {
+                "token": token,
+                "Idempotency-Key": "route-foreign-detail-response-key",
+            }
+            foreign_detail = client.put(
+                "/contact/details/21001",
+                headers=foreign_detail_headers,
+                json={"value": "foreign-secret@example.invalid"},
+            )
+            mode = "success"
+            foreign_detail_replay = client.put(
+                "/contact/details/21001",
+                headers=foreign_detail_headers,
+                json={"value": "foreign-secret@example.invalid"},
+            )
+            assert foreign_detail.json()["errors"][0]["code"] == 520
+            assert "foreign-secret" not in foreign_detail.text
+            assert foreign_detail_replay.json() == foreign_detail.json()
+            assert (
+                foreign_detail_replay.headers["X-Request-ID"]
+                == foreign_detail.headers["X-Request-ID"]
+            )
+            assert detail_puts == 2
 
             digest_secret = b"rotated-contact-route-integration-secret"
             rejected_rotated_success = client.post(

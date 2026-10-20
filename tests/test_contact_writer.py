@@ -5,7 +5,8 @@ import uuid
 import pytest
 
 from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed
-from proxy_api.contacts.service import ContactCreateState, ContactWriter
+from proxy_api.contacts.routes import _validate_detail_write_response
+from proxy_api.contacts.service import ContactCreateState, ContactMutationWriter, ContactWriter
 from proxy_api.operations import (
     BeginOperation,
     OperationRecord,
@@ -124,6 +125,24 @@ class FakeProvider:
             raise self.error_after_send
         return self.response
 
+    async def write_once(
+        self,
+        method: str,
+        path: str,
+        *,
+        json_body: dict[str, object] | None,
+        before_send: object,
+        deadline_seconds: float | None = None,
+    ) -> object:
+        del deadline_seconds
+        if self.error_before_send is not None:
+            raise self.error_before_send
+        await before_send()  # type: ignore[operator]
+        self.calls.append({"method": method, "path": path, "json": json_body})
+        if self.error_after_send is not None:
+            raise self.error_after_send
+        return self.response
+
     async def recheck_access(self) -> None:
         self.rechecks += 1
         if self.recheck_error is not None:
@@ -181,6 +200,27 @@ async def create(
         name="Synthetic Contact",
         detail_type="email",
         detail_data="contact@example.invalid",
+    )
+
+
+async def mutate(
+    writer: ContactMutationWriter,
+    provider: FakeProvider,
+    *,
+    key: str | None = "mutation-key",
+    value: str = "changed@example.invalid",
+) -> object:
+    return await writer.mutate(
+        access(),
+        provider,  # type: ignore[arg-type]
+        request_id=uuid.uuid4(),
+        provider_account="primary",
+        operation="C07",
+        idempotency_key=key,
+        method="PUT",
+        path="/contact/details/20101",
+        json_body={"value": value},
+        validate_response=lambda _: {"id": 20101, "type": "email"},
     )
 
 
@@ -388,3 +428,127 @@ async def test_wrong_upstream_project_is_unknown_and_not_disclosed() -> None:
     assert outcome.result is None
     assert len(provider.calls) == 1
     assert [state for state, _ in journal.transitions] == ["unknown"]
+
+
+@pytest.mark.asyncio
+async def test_mutation_writer_replays_safe_result_without_second_send() -> None:
+    journal = FakeJournal()
+    provider = FakeProvider()
+    writer = ContactMutationWriter(journal)  # type: ignore[arg-type]
+
+    first = await mutate(writer, provider)
+    replay = await mutate(writer, provider)
+
+    assert first.state is ContactCreateState.SUCCEEDED
+    assert replay.state is ContactCreateState.REPLAYED
+    assert replay.request_id == first.request_id
+    assert replay.result == {"id": 20101, "type": "email"}
+    assert provider.calls == [
+        {
+            "method": "PUT",
+            "path": "/contact/details/20101",
+            "json": {"value": "changed@example.invalid"},
+        }
+    ]
+    assert provider.rechecks == 1
+    assert "changed@example.invalid" not in str(journal.records["mutation-key"].safe_result)
+
+
+@pytest.mark.asyncio
+async def test_mutation_writer_conflict_and_unknown_are_not_resent() -> None:
+    journal = FakeJournal()
+    provider = FakeProvider()
+    writer = ContactMutationWriter(journal)  # type: ignore[arg-type]
+
+    first = await mutate(writer, provider)
+    conflict = await mutate(writer, provider, value="different@example.invalid")
+    provider.error_after_send = ProviderDeadlineExceeded("Provider deadline exceeded")
+    unknown = await mutate(writer, provider, key="unknown-key")
+    unknown_replay = await mutate(writer, provider, key="unknown-key")
+
+    assert first.state is ContactCreateState.SUCCEEDED
+    assert conflict.state is ContactCreateState.CONFLICT
+    assert conflict.request_id == first.request_id
+    assert unknown.state is ContactCreateState.UNKNOWN
+    assert unknown_replay.state is ContactCreateState.UNKNOWN
+    assert unknown_replay.request_id == unknown.request_id
+    assert len(provider.calls) == 2
+
+
+@pytest.mark.asyncio
+async def test_mutation_writer_preserves_pre_and_post_dispatch_auth_boundary() -> None:
+    journal = FakeJournal()
+    provider = FakeProvider()
+    writer = ContactMutationWriter(journal)  # type: ignore[arg-type]
+    provider.error_before_send = ClientAuthenticationError()
+
+    with pytest.raises(ClientAuthenticationError):
+        await mutate(writer, provider, key="pre-auth")
+
+    provider.error_before_send = None
+    provider.error_after_send = ClientAuthenticationError()
+    post = await mutate(writer, provider, key="post-auth")
+    replay = await mutate(writer, provider, key="post-auth")
+
+    assert post.state is ContactCreateState.UNKNOWN
+    assert replay.state is ContactCreateState.UNKNOWN
+    assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "foreign_link",
+    [
+        {"project_id": 10002},
+        {"metadata": {"last_project_id": 10002}},
+        {"contact_id": 20002},
+        {"person_id": 20002},
+        {"parent_id": 20002},
+        {"contact": {"id": 20002}},
+    ],
+)
+async def test_c07_foreign_write_response_is_unknown_without_retry(
+    foreign_link: dict[str, object],
+) -> None:
+    journal = FakeJournal()
+    provider = FakeProvider()
+    provider.response = {
+        "status": "success",
+        "result": {
+            "id": 20101,
+            "type": "email",
+            "data": "foreign-secret@example.invalid",
+            **foreign_link,
+        },
+    }
+    writer = ContactMutationWriter(journal)  # type: ignore[arg-type]
+
+    async def attempt() -> object:
+        return await writer.mutate(
+            access(),
+            provider,  # type: ignore[arg-type]
+            request_id=uuid.uuid4(),
+            provider_account="primary",
+            operation="C07",
+            idempotency_key="foreign-response-key",
+            method="PUT",
+            path="/contact/details/20101",
+            json_body={"value": "foreign-secret@example.invalid"},
+            validate_response=lambda response: _validate_detail_write_response(
+                response,
+                detail_id="20101",
+                contact_id="20001",
+                project_id=10001,
+                expected_value="foreign-secret@example.invalid",
+            ),
+        )
+
+    first = await attempt()
+    replay = await attempt()
+
+    assert first.state is ContactCreateState.UNKNOWN
+    assert first.result is None
+    assert replay.state is ContactCreateState.UNKNOWN
+    assert replay.request_id == first.request_id
+    assert len(provider.calls) == 1
+    assert journal.records["foreign-response-key"].safe_result is None

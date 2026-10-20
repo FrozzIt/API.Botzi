@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import uuid
+from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
@@ -23,6 +24,8 @@ from proxy_api.reads.detail_ownership import (
 )
 
 CONTACT_CREATE_OPERATION = "C02"
+
+MutationResponseValidator = Callable[[object], dict[str, object]]
 
 
 class ContactCreateState(StrEnum):
@@ -255,3 +258,104 @@ class ContactWriter:
                 }
             ],
         }
+
+
+class ContactMutationWriter:
+    def __init__(self, journal: OperationJournalService) -> None:
+        self._journal = journal
+
+    async def mutate(
+        self,
+        access: AuthenticatedSession,
+        provider: AuthorizedProvider,
+        *,
+        request_id: uuid.UUID,
+        provider_account: str,
+        operation: str,
+        idempotency_key: str | None,
+        method: str,
+        path: str,
+        json_body: dict[str, object] | None,
+        validate_response: MutationResponseValidator,
+    ) -> ContactCreateOutcome:
+        if access.provider_account != provider_account:
+            raise ProviderError("Provider account is unavailable")
+
+        journal_payload: dict[str, object] = {
+            "method": method,
+            "path": path,
+            "body": json_body or {},
+        }
+        try:
+            begun = await self._journal.begin(
+                access,
+                request_id=request_id,
+                operation=operation,
+                idempotency_key=idempotency_key,
+                payload=journal_payload,
+            )
+        except (SQLAlchemyError, RuntimeError):
+            return ContactCreateOutcome(request_id, ContactCreateState.FAILED)
+        record = begun.record
+        if not begun.execute:
+            if record.fingerprint != self._journal.payload_fingerprint(journal_payload):
+                return ContactCreateOutcome(record.request_id, ContactCreateState.CONFLICT)
+            if record.state is OperationState.SUCCEEDED:
+                if record.safe_result is None:
+                    return ContactCreateOutcome(record.request_id, ContactCreateState.UNKNOWN)
+                await provider.recheck_access()
+                return ContactCreateOutcome(
+                    record.request_id,
+                    ContactCreateState.REPLAYED,
+                    record.safe_result,
+                )
+            return ContactCreateOutcome(
+                record.request_id,
+                ContactCreateState(record.state.value),
+            )
+
+        dispatch_started = False
+
+        async def mark_dispatch_started() -> None:
+            nonlocal dispatch_started
+            await self._journal.mark_dispatch_started(record.request_id)
+            dispatch_started = True
+
+        try:
+            response = await provider.write_once(
+                method,
+                path,
+                json_body=json_body,
+                before_send=mark_dispatch_started,
+            )
+            safe_result = validate_response(response)
+            await self._journal.mark_succeeded(record.request_id, safe_result)
+        except ClientAuthenticationError:
+            if dispatch_started:
+                return ContactCreateOutcome(record.request_id, ContactCreateState.UNKNOWN)
+            await self._mark_failed(record.request_id)
+            raise
+        except OperationTransitionRejected:
+            return ContactCreateOutcome(record.request_id, ContactCreateState.UNKNOWN)
+        except (ProviderError, ProviderProtocolError):
+            if not dispatch_started:
+                await self._mark_failed(record.request_id)
+                return ContactCreateOutcome(record.request_id, ContactCreateState.FAILED)
+            return ContactCreateOutcome(record.request_id, ContactCreateState.UNKNOWN)
+        except (SQLAlchemyError, RuntimeError):
+            if not dispatch_started:
+                await self._mark_failed(record.request_id)
+                return ContactCreateOutcome(record.request_id, ContactCreateState.FAILED)
+            return ContactCreateOutcome(record.request_id, ContactCreateState.UNKNOWN)
+
+        return ContactCreateOutcome(
+            record.request_id,
+            ContactCreateState.SUCCEEDED,
+            safe_result,
+        )
+
+    async def _mark_failed(self, request_id: uuid.UUID) -> None:
+        try:
+            await self._journal.mark_failed_before_send(request_id)
+        except (SQLAlchemyError, RuntimeError):
+            pass

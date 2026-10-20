@@ -378,6 +378,7 @@ def _serialize_lead(
     expected_project_id: int,
     *,
     expected_lead_id: int | None = None,
+    expected_contact_id: ProviderIdentifier | None = None,
 ) -> dict[str, object]:
     if not isinstance(value, dict):
         raise ProviderProtocolError("Provider response is invalid")
@@ -387,6 +388,11 @@ def _serialize_lead(
     if expected_lead_id is not None and lead_id != expected_lead_id:
         raise ReadAccessDenied
     contact_id = _require_identifier(value.get("contact_id"))
+    if expected_contact_id is not None and not _identifiers_match(
+        contact_id,
+        expected_contact_id,
+    ):
+        raise ReadAccessDenied
     contact = _serialize_contact(
         value.get("contact"),
         expected_project_id,
@@ -578,6 +584,36 @@ async def verify_contact_detail_parent(
     if not await ownership_store.is_current(ownership):
         raise ReadAccessDenied
     return ownership
+
+
+async def verify_contact_parent(
+    contact_id: ProviderIdentifier,
+    access: AuthenticatedSession,
+    provider: ProviderDependency,
+    provider_account: str,
+    ownership_store: DetailOwnershipStore,
+) -> dict[str, object]:
+    _ensure_provider_account(access, provider_account)
+    response = await provider.get(f"/contact/{contact_id}")
+    raw_contact = _object_result(response)
+    result = _serialize_contact(
+        raw_contact,
+        access.project_id,
+        expected_contact_id=contact_id,
+    )
+    try:
+        await ownership_store.sync_verified_contacts(
+            access.provider_account,
+            [
+                _verified_contact(
+                    raw_contact,
+                    details_complete=isinstance(raw_contact, dict) and "details" in raw_contact,
+                )
+            ],
+        )
+    except DetailOwnershipConflict:
+        raise ReadAccessDenied from None
+    return result
 
 
 @router.get("/project/{project_id}/customs", include_in_schema=False)
