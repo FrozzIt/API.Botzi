@@ -268,6 +268,59 @@ def test_c06_rejects_foreign_detail_marker_without_disclosing_data(
     assert "foreign-secret" not in response.text
 
 
+@pytest.mark.parametrize(
+    "parent_link",
+    [
+        {"contact_id": 202},
+        {"person_id": 202},
+        {"parent_id": 202},
+        {"contact": {"id": 202}},
+    ],
+)
+def test_c06_rejects_contradictory_parent_without_disclosing_detail(
+    parent_link: dict[str, object],
+) -> None:
+    client, adapter, ownership, _ = make_client()
+    ownership.ownership = DetailOwnership("primary", "501", "101", 10001, True, datetime.now(UTC))
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/contact/details/501")] = {
+        "status": "success",
+        "result": {
+            "id": 501,
+            "type": "email",
+            "data": "foreign-secret@example.invalid",
+            **parent_link,
+        },
+    }
+
+    with client:
+        response = client.get("/contact/details/501", headers={"token": "token-a"})
+
+    assert response.json()["errors"][0]["code"] == 404
+    assert "foreign-secret" not in response.text
+
+
+def test_c06_accepts_matching_parent_marker() -> None:
+    client, adapter, ownership, _ = make_client()
+    ownership.ownership = DetailOwnership("primary", "501", "101", 10001, True, datetime.now(UTC))
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/contact/details/501")] = {
+        "status": "success",
+        "result": {
+            "id": 501,
+            "type": "email",
+            "data": "safe@example.invalid",
+            "contact_id": 101,
+            "contact": {"id": 101},
+        },
+    }
+
+    with client:
+        response = client.get("/contact/details/501", headers={"token": "token-a"})
+
+    assert response.json()["result"]["data"] == "safe@example.invalid"
+
+
 def test_c07_uses_parent_mapping_and_journal_writer() -> None:
     client, adapter, ownership, writer = make_client()
     ownership.ownership = DetailOwnership(
@@ -355,6 +408,56 @@ def test_c09_rejects_foreign_list_item_before_lead_reads(
     assert not any(path.startswith("/lead/") for _, path in adapter.calls)
 
 
+def test_c09_rejects_nested_contact_conflict_for_entire_list() -> None:
+    client, adapter, _, _ = make_client()
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/contact/101/leads")] = {
+        "status": "success",
+        "result": [
+            {"id": 801, "contact_id": 101, "contact": {"id": 101}},
+            {
+                "id": 802,
+                "contact_id": 101,
+                "contact": {"id": 202},
+                "name": "foreign-secret",
+            },
+        ],
+    }
+    adapter.responses[("GET", "/lead/801")] = {
+        "status": "success",
+        "result": {"id": 801, "contact_id": 101, "contact": contact(10001)["result"]},
+    }
+    adapter.responses[("GET", "/lead/802")] = {
+        "status": "success",
+        "result": {"id": 802, "contact_id": 101, "contact": contact(10001)["result"]},
+    }
+
+    with client:
+        response = client.get("/contact/101/leads", headers={"token": "token-a"})
+
+    assert response.json()["errors"][0]["code"] == 404
+    assert "foreign-secret" not in response.text
+    assert not any(path.startswith("/lead/") for _, path in adapter.calls)
+
+
+def test_c09_accepts_consistent_nested_contact_marker() -> None:
+    client, adapter, _, _ = make_client()
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/contact/101/leads")] = {
+        "status": "success",
+        "result": [{"id": 801, "contact_id": 101, "contact": {"id": 101}}],
+    }
+    adapter.responses[("GET", "/lead/801")] = {
+        "status": "success",
+        "result": {"id": 801, "contact_id": 101, "contact": contact(10001)["result"]},
+    }
+
+    with client:
+        response = client.get("/contact/101/leads", headers={"token": "token-a"})
+
+    assert response.json()["result"][0]["id"] == 801
+
+
 def test_c10_and_c12_verify_contact_and_project_field() -> None:
     client, adapter, _, writer = make_client()
     adapter.responses[("GET", "/contact/101")] = contact(10001)
@@ -411,6 +514,67 @@ def test_c10_rejects_foreign_field_marker_without_disclosing_value(
 
     assert response.json()["errors"][0]["code"] == 404
     assert "foreign-secret" not in response.text
+
+
+@pytest.mark.parametrize(
+    "parent_link",
+    [
+        {"contact_id": 202},
+        {"person_id": 202},
+        {"parent_id": 202},
+        {"contact": {"id": 202}},
+    ],
+)
+def test_c10_rejects_contradictory_parent_without_disclosing_value(
+    parent_link: dict[str, object],
+) -> None:
+    client, adapter, _, _ = make_client()
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/project/10001/fields")] = {
+        "status": "success",
+        "result": [{"id": 701, "name": "Safe field", "type": "string"}],
+    }
+    adapter.responses[("GET", "/contact/101/field/701")] = {
+        "status": "success",
+        "result": {
+            "id": 701,
+            "name": "Safe field",
+            "type": "string",
+            "value": "foreign-secret",
+            **parent_link,
+        },
+    }
+
+    with client:
+        response = client.get("/contact/101/field/701", headers={"token": "token-a"})
+
+    assert response.json()["errors"][0]["code"] == 404
+    assert "foreign-secret" not in response.text
+
+
+def test_c10_accepts_matching_parent_marker() -> None:
+    client, adapter, _, _ = make_client()
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/project/10001/fields")] = {
+        "status": "success",
+        "result": [{"id": 701, "name": "Safe field", "type": "string"}],
+    }
+    adapter.responses[("GET", "/contact/101/field/701")] = {
+        "status": "success",
+        "result": {
+            "id": 701,
+            "name": "Safe field",
+            "type": "string",
+            "value": "safe",
+            "contact_id": 101,
+            "contact": {"id": 101},
+        },
+    }
+
+    with client:
+        response = client.get("/contact/101/field/701", headers={"token": "token-a"})
+
+    assert response.json()["result"]["value"] == "safe"
 
 
 def test_foreign_or_repeated_project_query_stops_before_provider() -> None:

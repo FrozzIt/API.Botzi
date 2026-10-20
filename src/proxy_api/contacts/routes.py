@@ -214,6 +214,32 @@ def _closed_operation(request: Request) -> JSONResponse:
     )
 
 
+def _validate_contact_links(value: object, expected_contact_id: str) -> None:
+    if isinstance(value, dict):
+        for field, nested in value.items():
+            if field in {"contact_id", "person_id", "parent_id"} and nested is not None:
+                try:
+                    received_id = _require_identifier(nested)
+                except ProviderProtocolError:
+                    raise ReadAccessDenied from None
+                if not _identifiers_match(received_id, expected_contact_id):
+                    raise ReadAccessDenied
+            if field == "contact" and nested is not None:
+                if not isinstance(nested, dict):
+                    raise ReadAccessDenied
+                if "id" in nested:
+                    try:
+                        received_id = _require_identifier(nested["id"])
+                    except ProviderProtocolError:
+                        raise ReadAccessDenied from None
+                    if not _identifiers_match(received_id, expected_contact_id):
+                        raise ReadAccessDenied
+            _validate_contact_links(nested, expected_contact_id)
+    elif isinstance(value, list):
+        for nested in value:
+            _validate_contact_links(nested, expected_contact_id)
+
+
 def _validate_detail_write_response(
     response: object,
     *,
@@ -224,17 +250,12 @@ def _validate_detail_write_response(
 ) -> dict[str, object]:
     try:
         _validate_project_links(response, project_id)
+        _validate_contact_links(response, contact_id)
     except ReadAccessDenied:
         raise ProviderProtocolError("Provider response is invalid") from None
     result = _object_result(response)
     if not isinstance(result, dict):
         raise ProviderProtocolError("Provider response is invalid")
-    for parent_field in ("contact_id", "person_id", "parent_id"):
-        parent_id = result.get(parent_field)
-        if parent_id is not None and not _identifiers_match(
-            _require_identifier(parent_id), contact_id
-        ):
-            raise ProviderProtocolError("Provider response is invalid")
     received_id = _require_identifier(result.get("id"))
     if not _identifiers_match(received_id, detail_id):
         raise ProviderProtocolError("Provider response is invalid")
@@ -340,6 +361,7 @@ async def contact_detail(
         )
         response = await provider.get(f"/contact/details/{normalized_id}")
         _validate_project_links(response, access.project_id)
+        _validate_contact_links(response, ownership.contact_id)
         result = _object_result(response)
         if not isinstance(result, dict):
             raise ProviderProtocolError("Provider response is invalid")
@@ -451,6 +473,7 @@ async def contact_leads(
         )
         list_response = await provider.get(f"/contact/{normalized_contact_id}/leads")
         _validate_project_links(list_response, access.project_id)
+        _validate_contact_links(list_response, normalized_contact_id)
         listed = _list_result(list_response)
         lead_ids: list[int] = []
         for item in listed:
@@ -469,6 +492,7 @@ async def contact_leads(
         for lead_id in lead_ids:
             lead_response = await provider.get(f"/lead/{lead_id}")
             _validate_project_links(lead_response, access.project_id)
+            _validate_contact_links(lead_response, normalized_contact_id)
             raw_lead = _object_result(lead_response)
             result.append(
                 _serialize_lead(
@@ -514,6 +538,7 @@ async def contact_field(
             f"/contact/{normalized_contact_id}/field/{normalized_field_id}"
         )
         _validate_project_links(field_response, access.project_id)
+        _validate_contact_links(field_response, normalized_contact_id)
         result = _object_result(field_response)
         if not isinstance(result, dict) or not _identifiers_match(
             _require_identifier(result.get("id")),

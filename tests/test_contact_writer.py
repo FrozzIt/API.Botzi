@@ -503,6 +503,8 @@ async def test_mutation_writer_preserves_pre_and_post_dispatch_auth_boundary() -
         {"metadata": {"last_project_id": 10002}},
         {"contact_id": 20002},
         {"person_id": 20002},
+        {"parent_id": 20002},
+        {"contact": {"id": 20002}},
     ],
 )
 async def test_c07_foreign_write_response_is_unknown_without_retry(
