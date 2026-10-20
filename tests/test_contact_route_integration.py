@@ -207,11 +207,15 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
         if request.method == "PUT" and request.url.path == "/contact/details/21001":
             detail_puts += 1
             detail_value = json.loads(request.content)["value"]
+            result = {"id": 21001, "type": "email", "data": detail_value}
+            if mode == "foreign_detail_response":
+                result["project_id"] = 10002
+                result["contact_id"] = 20002
             return httpx.Response(
                 200,
                 json={
                     "status": "success",
-                    "result": {"id": 21001, "type": "email", "data": detail_value},
+                    "result": result,
                 },
             )
         if request.method == "GET" and request.url.path == "/contact/20001/leads":
@@ -431,6 +435,31 @@ def test_full_contact_route_is_idempotent_unknown_safe_and_guarded(
             assert field_deletes == 1
             assert deferred.json()["errors"][0]["code"] == 501
             assert contact_posts + detail_puts + field_deletes == provider_calls_before_deferred
+
+            mode = "foreign_detail_response"
+            foreign_detail_headers = {
+                "token": token,
+                "Idempotency-Key": "route-foreign-detail-response-key",
+            }
+            foreign_detail = client.put(
+                "/contact/details/21001",
+                headers=foreign_detail_headers,
+                json={"value": "foreign-secret@example.invalid"},
+            )
+            mode = "success"
+            foreign_detail_replay = client.put(
+                "/contact/details/21001",
+                headers=foreign_detail_headers,
+                json={"value": "foreign-secret@example.invalid"},
+            )
+            assert foreign_detail.json()["errors"][0]["code"] == 520
+            assert "foreign-secret" not in foreign_detail.text
+            assert foreign_detail_replay.json() == foreign_detail.json()
+            assert (
+                foreign_detail_replay.headers["X-Request-ID"]
+                == foreign_detail.headers["X-Request-ID"]
+            )
+            assert detail_puts == 2
 
             digest_secret = b"rotated-contact-route-integration-secret"
             rejected_rotated_success = client.post(

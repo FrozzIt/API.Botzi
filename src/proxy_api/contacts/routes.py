@@ -41,6 +41,7 @@ from proxy_api.reads.routes import (
     _require_identifier,
     _require_string,
     _serialize_lead,
+    _validate_project_links,
     read_not_found_error,
     verify_contact_detail_parent,
     verify_contact_parent,
@@ -217,11 +218,23 @@ def _validate_detail_write_response(
     response: object,
     *,
     detail_id: str,
+    contact_id: str,
+    project_id: int,
     expected_value: str,
 ) -> dict[str, object]:
+    try:
+        _validate_project_links(response, project_id)
+    except ReadAccessDenied:
+        raise ProviderProtocolError("Provider response is invalid") from None
     result = _object_result(response)
     if not isinstance(result, dict):
         raise ProviderProtocolError("Provider response is invalid")
+    for parent_field in ("contact_id", "person_id", "parent_id"):
+        parent_id = result.get(parent_field)
+        if parent_id is not None and not _identifiers_match(
+            _require_identifier(parent_id), contact_id
+        ):
+            raise ProviderProtocolError("Provider response is invalid")
     received_id = _require_identifier(result.get("id"))
     if not _identifiers_match(received_id, detail_id):
         raise ProviderProtocolError("Provider response is invalid")
@@ -326,6 +339,7 @@ async def contact_detail(
             ownership_store,
         )
         response = await provider.get(f"/contact/details/{normalized_id}")
+        _validate_project_links(response, access.project_id)
         result = _object_result(response)
         if not isinstance(result, dict):
             raise ProviderProtocolError("Provider response is invalid")
@@ -363,7 +377,7 @@ async def edit_contact_detail(
     try:
         key = _idempotency_key(idempotency_keys)
         normalized_id = normalize_identifier(detail_id)
-        await verify_contact_detail_parent(
+        ownership = await verify_contact_detail_parent(
             normalized_id,
             access,
             provider,
@@ -393,6 +407,8 @@ async def edit_contact_detail(
             validate_response=lambda response: _validate_detail_write_response(
                 response,
                 detail_id=normalized_id,
+                contact_id=ownership.contact_id,
+                project_id=access.project_id,
                 expected_value=payload.value,
             ),
         )
@@ -410,14 +426,9 @@ async def edit_contact_detail(
 
 @router.delete("/contact/details/{detail_id}", include_in_schema=False)
 async def delete_contact_detail_deferred(
-    request: Request,
     detail_id: str,
     access: AuthenticatedSessionDependency,
 ) -> JSONResponse:
-    try:
-        validate_project_query(request, access.project_id)
-    except LookupError:
-        return read_not_found_error()
     return operation_error(501, DEFERRED_MESSAGE)
 
 
@@ -438,7 +449,9 @@ async def contact_leads(
             provider_account,
             ownership_store,
         )
-        listed = _list_result(await provider.get(f"/contact/{normalized_contact_id}/leads"))
+        list_response = await provider.get(f"/contact/{normalized_contact_id}/leads")
+        _validate_project_links(list_response, access.project_id)
+        listed = _list_result(list_response)
         lead_ids: list[int] = []
         for item in listed:
             if not isinstance(item, dict):
@@ -454,7 +467,9 @@ async def contact_leads(
             raise ProviderProtocolError("Provider response is invalid")
         result = []
         for lead_id in lead_ids:
-            raw_lead = _object_result(await provider.get(f"/lead/{lead_id}"))
+            lead_response = await provider.get(f"/lead/{lead_id}")
+            _validate_project_links(lead_response, access.project_id)
+            raw_lead = _object_result(lead_response)
             result.append(
                 _serialize_lead(
                     raw_lead,
@@ -495,9 +510,11 @@ async def contact_field(
             provider,
             provider_account,
         )
-        result = _object_result(
-            await provider.get(f"/contact/{normalized_contact_id}/field/{normalized_field_id}")
+        field_response = await provider.get(
+            f"/contact/{normalized_contact_id}/field/{normalized_field_id}"
         )
+        _validate_project_links(field_response, access.project_id)
+        result = _object_result(field_response)
         if not isinstance(result, dict) or not _identifiers_match(
             _require_identifier(result.get("id")),
             normalized_field_id,

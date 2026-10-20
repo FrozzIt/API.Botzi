@@ -5,6 +5,7 @@ import uuid
 import pytest
 
 from proxy_api.auth.service import AuthenticatedSession, AuthenticationFailed
+from proxy_api.contacts.routes import _validate_detail_write_response
 from proxy_api.contacts.service import ContactCreateState, ContactMutationWriter, ContactWriter
 from proxy_api.operations import (
     BeginOperation,
@@ -492,3 +493,60 @@ async def test_mutation_writer_preserves_pre_and_post_dispatch_auth_boundary() -
     assert post.state is ContactCreateState.UNKNOWN
     assert replay.state is ContactCreateState.UNKNOWN
     assert len(provider.calls) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "foreign_link",
+    [
+        {"project_id": 10002},
+        {"metadata": {"last_project_id": 10002}},
+        {"contact_id": 20002},
+        {"person_id": 20002},
+    ],
+)
+async def test_c07_foreign_write_response_is_unknown_without_retry(
+    foreign_link: dict[str, object],
+) -> None:
+    journal = FakeJournal()
+    provider = FakeProvider()
+    provider.response = {
+        "status": "success",
+        "result": {
+            "id": 20101,
+            "type": "email",
+            "data": "foreign-secret@example.invalid",
+            **foreign_link,
+        },
+    }
+    writer = ContactMutationWriter(journal)  # type: ignore[arg-type]
+
+    async def attempt() -> object:
+        return await writer.mutate(
+            access(),
+            provider,  # type: ignore[arg-type]
+            request_id=uuid.uuid4(),
+            provider_account="primary",
+            operation="C07",
+            idempotency_key="foreign-response-key",
+            method="PUT",
+            path="/contact/details/20101",
+            json_body={"value": "foreign-secret@example.invalid"},
+            validate_response=lambda response: _validate_detail_write_response(
+                response,
+                detail_id="20101",
+                contact_id="20001",
+                project_id=10001,
+                expected_value="foreign-secret@example.invalid",
+            ),
+        )
+
+    first = await attempt()
+    replay = await attempt()
+
+    assert first.state is ContactCreateState.UNKNOWN
+    assert first.result is None
+    assert replay.state is ContactCreateState.UNKNOWN
+    assert replay.request_id == first.request_id
+    assert len(provider.calls) == 1
+    assert journal.records["foreign-response-key"].safe_result is None

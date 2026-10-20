@@ -5,6 +5,7 @@ from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from datetime import UTC, datetime
 from typing import Any
 
+import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
@@ -176,6 +177,31 @@ def test_deferred_and_unverified_writes_do_not_reach_provider() -> None:
     assert writer.calls == []
 
 
+@pytest.mark.parametrize(
+    "path",
+    [
+        "/contact/details/501",
+        "/contact/details/arbitrary?project_id=10002",
+        "/contact/details/501?project_id=10001&project_id=10002",
+    ],
+)
+def test_c08_is_fixed_after_auth_without_object_or_provider_lookup(path: str) -> None:
+    client, adapter, ownership, writer = make_client()
+    with client:
+        allowed = client.delete(path, headers={"token": "token-a"})
+        rejected = client.delete(path, headers={"token": "invalid"})
+
+    assert allowed.status_code == 200
+    assert allowed.json() == {
+        "status": "error",
+        "errors": [{"code": 501, "message": "Operation is not available in this release"}],
+    }
+    assert rejected.json()["errors"][0]["code"] == 401
+    assert ownership.synced == []
+    assert adapter.calls == []
+    assert writer.calls == []
+
+
 def test_c06_requires_active_mapping_and_rechecks_parent() -> None:
     client, adapter, ownership, _ = make_client()
 
@@ -210,6 +236,36 @@ def test_c06_requires_active_mapping_and_rechecks_parent() -> None:
         ("GET", "/contact/101"),
         ("GET", "/contact/details/501"),
     ]
+
+
+@pytest.mark.parametrize(
+    "foreign_link",
+    [
+        {"project_id": 10002},
+        {"metadata": {"last_project_id": 10002}},
+    ],
+)
+def test_c06_rejects_foreign_detail_marker_without_disclosing_data(
+    foreign_link: dict[str, object],
+) -> None:
+    client, adapter, ownership, _ = make_client()
+    ownership.ownership = DetailOwnership("primary", "501", "101", 10001, True, datetime.now(UTC))
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/contact/details/501")] = {
+        "status": "success",
+        "result": {
+            "id": 501,
+            "type": "email",
+            "data": "foreign-secret@example.invalid",
+            **foreign_link,
+        },
+    }
+
+    with client:
+        response = client.get("/contact/details/501", headers={"token": "token-a"})
+
+    assert response.json()["errors"][0]["code"] == 404
+    assert "foreign-secret" not in response.text
 
 
 def test_c07_uses_parent_mapping_and_journal_writer() -> None:
@@ -277,6 +333,28 @@ def test_c09_rejects_entire_mixed_lead_list() -> None:
     assert ("GET", "/lead/802") in adapter.calls
 
 
+@pytest.mark.parametrize("foreign_link", [{"project_id": 10002}, {"last_project_id": 10002}])
+def test_c09_rejects_foreign_list_item_before_lead_reads(
+    foreign_link: dict[str, int],
+) -> None:
+    client, adapter, _, _ = make_client()
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/contact/101/leads")] = {
+        "status": "success",
+        "result": [
+            {"id": 801, "contact_id": 101, "name": "safe"},
+            {"id": 802, "contact_id": 101, "name": "foreign-secret", **foreign_link},
+        ],
+    }
+
+    with client:
+        response = client.get("/contact/101/leads", headers={"token": "token-a"})
+
+    assert response.json()["errors"][0]["code"] == 404
+    assert "foreign-secret" not in response.text
+    assert not any(path.startswith("/lead/") for _, path in adapter.calls)
+
+
 def test_c10_and_c12_verify_contact_and_project_field() -> None:
     client, adapter, _, writer = make_client()
     adapter.responses[("GET", "/contact/101")] = contact(10001)
@@ -303,6 +381,36 @@ def test_c10_and_c12_verify_contact_and_project_field() -> None:
     assert call["method"] == "DELETE"
     assert call["path"] == "/contact/101/field/701"
     assert call["idempotency_key"] == "clear-key"
+
+
+@pytest.mark.parametrize(
+    "foreign_link", [{"project_id": 10002}, {"metadata": {"last_project_id": 10002}}]
+)
+def test_c10_rejects_foreign_field_marker_without_disclosing_value(
+    foreign_link: dict[str, object],
+) -> None:
+    client, adapter, _, _ = make_client()
+    adapter.responses[("GET", "/contact/101")] = contact(10001)
+    adapter.responses[("GET", "/project/10001/fields")] = {
+        "status": "success",
+        "result": [{"id": 701, "name": "Safe field", "type": "string"}],
+    }
+    adapter.responses[("GET", "/contact/101/field/701")] = {
+        "status": "success",
+        "result": {
+            "id": 701,
+            "name": "Safe field",
+            "type": "string",
+            "value": "foreign-secret",
+            **foreign_link,
+        },
+    }
+
+    with client:
+        response = client.get("/contact/101/field/701", headers={"token": "token-a"})
+
+    assert response.json()["errors"][0]["code"] == 404
+    assert "foreign-secret" not in response.text
 
 
 def test_foreign_or_repeated_project_query_stops_before_provider() -> None:
